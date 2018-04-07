@@ -16,8 +16,11 @@ class Model(object):
     
     def __call__(self, observ):
         hidden = self.dense(observ)
-        logits = self.output_layer(hidden)
-        return logits
+        self.logits = self.output_layer(hidden)
+        return self.logits
+    
+    def sample(self, observ):
+        return tf.distributions.Normal(self(observ), 0.1)
 
 
 def main(_):
@@ -29,6 +32,8 @@ def main(_):
     
     optimizer = tf.train.GradientDescentOptimizer(0.01)
     optimizer.apply_gradients(grads_and_vars)
+    
+    print(model.sample(observ=x).sample())
 
 
 if __name__ == '__main__':
