@@ -4,14 +4,18 @@ from __future__ import print_function
 
 import contextlib
 
+import gym.spaces
 import numpy as np
 import os
 import ray
 import tensorflow as tf
+from ray_tutorial.reinforce.distributions import Categorical, DiagGaussian
 from ray_tutorial.reinforce.env import BatchedEnv
 from ray_tutorial.reinforce.env import (NoPreprocessor)
 from ray_tutorial.reinforce.filter import RunningStat
-from ray_tutorial.reinforce.policy import ProximalPolicyLoss
+from ray_tutorial.reinforce.models.fc_net import fc_net
+from ray_tutorial.reinforce.models.vision_net import vision_net
+# from ray_tutorial.reinforce.policy import ProximalPolicyLoss
 from ray_tutorial.reinforce.rollout import add_advantage_values, rollouts
 
 
@@ -79,6 +83,82 @@ class MeanStdFilter(object):
         return x
 
 
+class DiagGaussian(object):
+    
+    def __init__(self, flat):
+        self.flat = flat
+        mean, logstd = tf.split(flat, 2, 1)
+        self.mean = mean
+        self.logstd = logstd
+        self.std = tf.exp(logstd)
+    
+    def logp(self, x):
+        return - 0.5 * tf.reduce_sum(tf.square((x - self.mean) / self.std), reduction_indices=[1]) \
+               - 0.5 * np.log(2.0 * np.pi) * tf.to_float(tf.shape(x)[1]) \
+               - tf.reduce_sum(self.logstd, reduction_indices=[1])
+    
+    def kl(self, other):
+        assert isinstance(other, DiagGaussian)
+        return tf.reduce_sum(other.logstd - self.logstd + (tf.square(self.std) + tf.square(self.mean - other.mean)) / (
+                2.0 * tf.square(other.std)) - 0.5, reduction_indices=[1])
+    
+    def entropy(self):
+        return tf.reduce_sum(self.logstd + .5 * np.log(2.0 * np.pi * np.e), reduction_indices=[1])
+    
+    def sample(self):
+        return self.mean + self.std * tf.random_normal(tf.shape(self.mean))
+
+
+class ProximalPolicyLoss(object):
+    
+    def __init__(self, observation_space, action_space, preprocessor, config, sess):
+        assert isinstance(action_space, gym.spaces.Discrete) or isinstance(action_space, gym.spaces.Box)
+        # adapting the kl divergence
+        self.kl_coeff = tf.placeholder(name="newkl", shape=(), dtype=tf.float32)
+        self.observations = tf.placeholder(tf.float32, shape=(None,) + preprocessor.shape)
+        self.advantages = tf.placeholder(tf.float32, shape=(None,))
+        
+        if isinstance(action_space, gym.spaces.Box):
+            # First half of the dimensions are the means, the second half are the standard deviations
+            self.action_dim = action_space.shape[0]
+            self.logit_dim = 2 * self.action_dim
+            self.actions = tf.placeholder(tf.float32, shape=(None, action_space.shape[0]))
+            Distribution = DiagGaussian
+        elif isinstance(action_space, gym.spaces.Discrete):
+            self.action_dim = action_space.n
+            self.logit_dim = self.action_dim
+            self.actions = tf.placeholder(tf.int64, shape=(None,))
+            Distribution = Categorical
+        else:
+            raise NotImplemented("action space" + str(type(env.action_space)) + "currently not supported")
+        self.prev_logits = tf.placeholder(tf.float32, shape=(None, self.logit_dim))
+        self.prev_dist = Distribution(self.prev_logits)
+        if len(observation_space.shape) > 1:
+            self.curr_logits = vision_net(self.observations, num_classes=self.logit_dim)
+        else:
+            assert len(observation_space.shape) == 1
+            self.curr_logits = fc_net(self.observations, num_classes=self.logit_dim)
+        self.curr_dist = Distribution(self.curr_logits)
+        self.sampler = self.curr_dist.sample()
+        self.entropy = self.curr_dist.entropy()
+        # Make loss functions.
+        self.ratio = tf.exp(self.curr_dist.logp(self.actions) - self.prev_dist.logp(self.actions))
+        self.kl = self.prev_dist.kl(self.curr_dist)
+        self.mean_kl = tf.reduce_mean(self.kl)
+        self.mean_entropy = tf.reduce_mean(self.entropy)
+        self.surr1 = self.ratio * self.advantages
+        self.surr2 = tf.clip_by_value(self.ratio, 1 - config["clip_param"], 1 + config["clip_param"]) * self.advantages
+        self.surr = tf.minimum(self.surr1, self.surr2)
+        self.loss = tf.reduce_mean(-self.surr + self.kl_coeff * self.kl - config["entropy_coeff"] * self.entropy)
+        self.sess = sess
+    
+    def compute_actions(self, observations):
+        return self.sess.run([self.sampler, self.curr_logits], feed_dict={self.observations: observations})
+    
+    def loss(self):
+        return self.loss
+
+
 class Agent(object):
     
     def __init__(self, name, batchsize, preprocessor, config, use_gpu):
@@ -111,11 +191,11 @@ class Agent(object):
     
     def _train(self, prev_logits, kl_coeff, observations, advantages, actions):
         trajectory = {
-            self.ppo.prev_logits:  prev_logits,
-            self.ppo.kl_coeff:     kl_coeff,
+            self.ppo.prev_logits: prev_logits,
+            self.ppo.kl_coeff: kl_coeff,
             self.ppo.observations: observations,
-            self.ppo.advantages:   advantages,
-            self.ppo.actions:      actions,
+            self.ppo.advantages: advantages,
+            self.ppo.actions: actions,
         }
         _, loss = self.sess.run([self.train_op, self.ppo.loss], feed_dict=trajectory)
         return loss
@@ -150,7 +230,7 @@ def default_config():
     kl_target = 0.01
     timesteps_per_batch = 40000
     
-    name = "CartPole-v0"
+    name = "MountainCarContinuous-v0"
     batchsize = 100
     preprocessor = NoPreprocessor()
     gamma = 0.995
