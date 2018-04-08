@@ -15,9 +15,9 @@ from agents.tools.wrappers import ConvertTo32Bit
 from ray.experimental.tfutils import TensorFlowVariables
 from ray.rllib.utils.filter import MeanStdFilter
 
-Trajectory = collections.namedtuple('Trajectory',
+Transition = collections.namedtuple('Transition',
                                     'observ, reward, done, action, next_observ, raw_return, return_')
-Trajectory.__new__.__defaults__ = (None,) * len(Trajectory._fields)
+Transition.__new__.__defaults__ = (None,) * len(Transition._fields)
 
 
 class Policy(object):
@@ -114,23 +114,30 @@ class REINFORCE(object):
     def _init(self):
         self.reward_filter = MeanStdFilter((), clip=5.)
     
+    def compute_trajectory(self):
+        trajectory = rollouts(self.env,
+                              self.policy,
+                              self.reward_filter,
+                              self.config)
+        return trajectory
+    
     def _train(self):
-        episodes = []
+        """REINFORCE Algorithm.
+        
+        Returns: Losses each timestep.
+        """
+        trajectories = []
         for _ in range(self.config.num_episodes):
-            episode = rollouts(self.env,
-                               self.policy,
-                               self.reward_filter,
-                               self.config)
-            print(episode[0])
-            episodes.append(episode)
+            trajectory = self.compute_trajectory()
+            trajectories.append(trajectory)
         
         losses = []
-        for episode in episodes:
-            for trajectory in episode:
+        for trajectory in trajectories:
+            for transition in trajectory:
                 _, loss = self.sess.run(
                     [self.policy.train_op, self.policy.loss], feed_dict={
-                        self.policy.observ: trajectory.observ,
-                        self.policy.action: trajectory.action})
+                        self.policy.observ: transition.observ,
+                        self.policy.action: transition.action})
                 losses.append(loss)
                 print('>> loss', loss)
         return losses
@@ -157,7 +164,7 @@ def rollouts(env, policy: Policy, reward_filter: MeanStdFilter, config):
     observ = env.reset()
     observ = observ[np.newaxis, ...]
     
-    trajectories = []
+    trajectory = []
     for t in itertools.count():
         # a_t ~ pi(a_t | s_t)
         action = policy.compute_action(observ)
@@ -171,12 +178,12 @@ def rollouts(env, policy: Policy, reward_filter: MeanStdFilter, config):
         raw_return += reward
         return_ += reward * config.discount_factor ** t
         
-        trajectories.append(Trajectory(observ, reward, done, action, next_observ, raw_return, return_))
+        trajectory.append(Transition(observ, reward, done, action, next_observ, raw_return, return_))
         observ = next_observ
         
         if done:
             break
-    return trajectories
+    return trajectory
 
 
 def default_config():
@@ -187,6 +194,7 @@ def default_config():
     num_episodes = 50
     
     return locals()
+
 
 def test_config():
     use_bias = False
