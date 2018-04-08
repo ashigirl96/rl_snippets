@@ -41,10 +41,10 @@ class Policy(object):
         self.sess.run(tf.global_variables_initializer())
     
     def _build_model(self):
-        """Build TensorFlow policy model.
-        """
+        """Build TensorFlow policy model."""
         self.observ = tf.placeholder(tf.float32, (None, 2), name='observ')
         self.action = tf.placeholder(tf.float32, (None, 1), name='action')
+        self.expected_value = tf.placeholder(tf.float32, (None), name='expected_value')
         x = tf.layers.dense(self.observ, 100, use_bias=False)
         x = tf.layers.dense(x, 100, use_bias=False)
         x = tf.layers.dense(x, 1, use_bias=False)
@@ -54,8 +54,9 @@ class Policy(object):
     def _set_loss(self):
         # TODO: How to implement loss function.
         prob = tf.nn.softmax(self.model)
-        prob = tf.exp(prob) - tf.exp(self.action)
-        log_prob = -tf.log(prob)
+        action_prob = tf.nn.softmax(self.action)
+        losses = tf.exp(prob) - tf.exp(action_prob)
+        log_prob = -tf.log(prob) * tf.stop_gradient(self.expected_value)
         log_prob = tf.check_numerics(log_prob, 'log_prob')
         self.loss = log_prob
     
@@ -137,7 +138,8 @@ class REINFORCE(object):
                 _, loss = self.sess.run(
                     [self.policy.train_op, self.policy.loss], feed_dict={
                         self.policy.observ: transition.observ,
-                        self.policy.action: transition.action})
+                        self.policy.action: transition.action,
+                        self.policy.expected_value: transition.return_})
                 losses.append(loss)
                 print('>> loss', loss)
         return losses
@@ -170,6 +172,9 @@ def rollouts(env, policy: Policy, reward_filter: MeanStdFilter, config):
         action = policy.compute_action(observ)
         
         next_observ, reward, done, _ = env.step(action)
+        
+        # This rollout does not provide batch observ and action.
+        # it reshape (2,) → (1, 2), (1,) → (1, 1) for TensorFlow placeholder.
         next_observ = next_observ[np.newaxis, ...]
         action = action[np.newaxis, ...]
         
@@ -178,7 +183,10 @@ def rollouts(env, policy: Policy, reward_filter: MeanStdFilter, config):
         raw_return += reward
         return_ += reward * config.discount_factor ** t
         
+        # Make trajectory sample.
         trajectory.append(Transition(observ, reward, done, action, next_observ, raw_return, return_))
+        
+        # s_{t+1} ← s_{t}
         observ = next_observ
         
         if done:
@@ -187,49 +195,44 @@ def rollouts(env, policy: Policy, reward_filter: MeanStdFilter, config):
 
 
 def default_config():
+    # Whether use bias on layer
     use_bias = False
+    # OpenAI Gym environment name
     env_name = 'MountainCarContinuous-v0'
+    # Discount Factor (gamma)
     discount_factor = 0.995
+    # Learning rate
     learning_rate = 1e-3
-    num_episodes = 50
-    
-    return locals()
-
-
-def test_config():
-    use_bias = False
-    env_name = 'MountainCarContinuous-v0'
-    discount_factor = 0.995
-    learning_rate = 1e-3
+    # Number of episodes
     num_episodes = 5
     
     return locals()
 
 
-def test_main():
-    reward_filter = MeanStdFilter((), clip=5.)
-    reward_filter2 = MeanStdFilter((), clip=5.)
-    config = AttrDict(default_config())
-    env = gym.make(config.env_name)
-    env = ConvertTo32Bit(env)
-    sess = tf.Session()
-    policy = Policy(sess, config)
-    poli = Policy(sess, config)
+def test_config():
+    # Whether use bias on layer
+    use_bias = False
+    # OpenAI Gym environment name
+    env_name = 'MountainCarContinuous-v0'
+    # Discount Factor (gamma)
+    discount_factor = 0.995
+    # Learning rate
+    learning_rate = 1e-3
+    # Number of episodes
+    num_episodes = 5
     
-    traj = rollouts(env, policy, reward_filter, config)
-    traj2 = rollouts(env, poli, reward_filter2, config)
-    print(traj[0])
-    print(traj2[0])
+    return locals()
 
 
 def main(_):
     config = AttrDict(test_config())
+    # Define Agent that train with REINFORCE algorithm.
     agent = REINFORCE(config)
     
+    # Train for num_iters times.
     for losses in agent.train(num_iters=1):
         print('loss', losses[0], losses[-1])
 
 
 if __name__ == '__main__':
-    # test_main()
     tf.app.run()
