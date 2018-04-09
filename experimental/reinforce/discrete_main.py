@@ -48,24 +48,23 @@ class Policy(object):
         # To look clearly, whether I use bias.
         use_bias = self.config.use_bias
         
-        # Placeholders.
-        self.observ = tf.placeholder(tf.float32, (None, 3), name='observ')
-        self.action = tf.placeholder(tf.float32, (None), name='action')
+        # Placeholders. observ = Box(4,), action = Discrete(2,)
+        # I have to describe which action do I select.
+        self.observ = tf.placeholder(tf.float32, (None, 4), name='observ')
+        self.action = tf.placeholder(tf.int32, name='action')
         self.expected_value = tf.placeholder(tf.float32, name='expected_value')
         
-        # Networks.
         x = tf.layers.dense(self.observ, 100, use_bias=use_bias)
         x = tf.layers.dense(x, 100, use_bias=use_bias)
-        x = tf.layers.dense(x, 1, use_bias=use_bias)
-        x = tf.clip_by_value(x, -1., 1.)
-        self.model = x
+        x = tf.layers.dense(x, 2, use_bias=use_bias)
+        self.logits = x
+        self.action_probs = tf.nn.softmax(self.logits)
+        
     
     def _set_loss(self):
         # TODO: How to implement loss function.
-        prob = tf.nn.softmax(self.model)
-        action_prob = self.action
-        losses = prob - action_prob
-        log_prob = -tf.log(losses) * tf.stop_gradient(self.expected_value)
+        picked_action = tf.gather(self.action_probs[0], self.action)
+        log_prob = -tf.log(picked_action)
         log_prob = tf.check_numerics(log_prob, 'log_prob')
         self.loss = log_prob
     
@@ -78,9 +77,15 @@ class Policy(object):
         Returns:
             (Lights, Camera) Action
         """
-        assert observ.shape == (1, 2)
-        action = self.sess.run(self.model, feed_dict={self.observ: observ})
-        return action[0]
+        assert observ.shape == (1, 4)
+        action_probs = self.sess.run(self.action_probs, feed_dict={self.observ: observ})
+        action_probs = np.squeeze(action_probs)
+        
+        # Note selection disappeared only discrete action model.
+        actions = np.arange(len(action_probs))
+        action = int(np.random.choice(actions, size=1, p=action_probs))
+        assert isinstance(action, int)
+        return action
 
 
 # TODO: I WILL IMPLEMENT.
@@ -182,9 +187,7 @@ def rollouts(env, policy: Policy, reward_filter: MeanStdFilter, config):
         next_observ, reward, done, _ = env.step(action)
         
         # This rollout does not provide batch observ and action.
-        # it reshape (2,) → (1, 2), (1,) → (1, 1) for TensorFlow placeholder.
         next_observ = next_observ[np.newaxis, ...]
-        action = action[np.newaxis, ...]
         
         # Adjust reward
         reward = reward_filter(reward)
@@ -206,7 +209,7 @@ def default_config():
     # Whether use bias on layer
     use_bias = False
     # OpenAI Gym environment name
-    env_name = 'MountainCarContinuous-v0'
+    env_name = 'CartPole-v0'
     # Discount Factor (gamma)
     discount_factor = 0.995
     # Learning rate
@@ -217,31 +220,6 @@ def default_config():
     return locals()
 
 
-def evaluate_policy(policy, config):
-    """
-    Args:
-        policy(Policy): instance of Policy
-    Returns:
-        score
-    """
-    env = gym.make(config.env_name)
-    
-    raw_return = 0
-    observ = env.reset()
-    observ = observ[np.newaxis, ...]
-    
-    for t in itertools.count():
-        # a_t ~ pi(a_t | s_t)
-        action = policy.compute_action(observ)
-        observ, reward, done, _ = env.step(action)
-        observ = observ[np.newaxis, ...]
-        raw_return += reward
-        
-        if done:
-            break
-    return raw_return
-
-
 def main(_):
     config = AttrDict(default_config())
     # Define Agent that train with REINFORCE algorithm.
@@ -249,7 +227,7 @@ def main(_):
     
     # Train for num_iters times.
     episode_loss = []
-    for i, losses in enumerate(agent.train(num_iters=3)):
+    for i, losses in enumerate(agent.train(num_iters=100)):
         loss = np.mean(losses)
         message = 'episode: {0}, loss: {1}'.format(i, loss)
         print('{0}{1}{2}'.format(bcolors.HEADER, message, bcolors.ENDC))

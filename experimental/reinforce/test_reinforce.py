@@ -40,10 +40,30 @@ def test_plot_return():
     plt.show()
 
 
-def main():
-    test_plot_return()
+def plot_loss_score():
+    config = AttrDict(default_config())
+    # Define Agent that train with REINFORCE algorithm.
+    agent = REINFORCE(config)
     
+    # Train for num_iters times.
+    episode_loss = []
+    episode_score = []
+    for i, losses in enumerate(agent.train(num_iters=100)):
+        loss = np.mean(losses)
+        # Evaluate the policy so that it will mean score.
+        score = np.mean([evaluate_policy(agent.policy) for _ in range(10)])
+        message = 'episode: {0}, loss: {1}, score: {2}'.format(i, loss, score)
+        print('{0}{1}{2}'.format(bcolors.HEADER, message, bcolors.ENDC))
+        episode_loss.append(loss)
+        episode_score.append(score)
+    x = np.arange(len(episode_loss))
+    plt.plot(x, episode_loss)
+    plt.plot(x, episode_score)
+    plt.show()
 
+
+def main(_):
+    plot_loss_score()
 
 if __name__ == '__main__':
-    main()
+    tf.app.run()

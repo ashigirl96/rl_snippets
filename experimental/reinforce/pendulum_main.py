@@ -45,26 +45,20 @@ class Policy(object):
     
     def _build_model(self):
         """Build TensorFlow policy model."""
-        # To look clearly, whether I use bias.
-        use_bias = self.config.use_bias
-        
-        # Placeholders.
         self.observ = tf.placeholder(tf.float32, (None, 3), name='observ')
         self.action = tf.placeholder(tf.float32, (None), name='action')
         self.expected_value = tf.placeholder(tf.float32, name='expected_value')
-        
-        # Networks.
-        x = tf.layers.dense(self.observ, 100, use_bias=use_bias)
-        x = tf.layers.dense(x, 100, use_bias=use_bias)
-        x = tf.layers.dense(x, 1, use_bias=use_bias)
-        x = tf.clip_by_value(x, -1., 1.)
+        x = tf.layers.dense(self.observ, 100, use_bias=False)
+        x = tf.layers.dense(x, 100, use_bias=False)
+        x = tf.layers.dense(x, 1, use_bias=False)
+        x = tf.clip_by_value(x, -2., 2.)
         self.model = x
     
     def _set_loss(self):
         # TODO: How to implement loss function.
         prob = tf.nn.softmax(self.model)
         action_prob = self.action
-        losses = prob - action_prob
+        losses = tf.losses.mean_squared_error(prob, action_prob)
         log_prob = -tf.log(losses) * tf.stop_gradient(self.expected_value)
         log_prob = tf.check_numerics(log_prob, 'log_prob')
         self.loss = log_prob
@@ -78,7 +72,7 @@ class Policy(object):
         Returns:
             (Lights, Camera) Action
         """
-        assert observ.shape == (1, 2)
+        assert observ.shape == (1, 3)
         action = self.sess.run(self.model, feed_dict={self.observ: observ})
         return action[0]
 
@@ -206,7 +200,8 @@ def default_config():
     # Whether use bias on layer
     use_bias = False
     # OpenAI Gym environment name
-    env_name = 'MountainCarContinuous-v0'
+    # env_name = 'MountainCarContinuous-v0'
+    env_name = 'Pendulum-v0'
     # Discount Factor (gamma)
     discount_factor = 0.995
     # Learning rate
@@ -249,7 +244,7 @@ def main(_):
     
     # Train for num_iters times.
     episode_loss = []
-    for i, losses in enumerate(agent.train(num_iters=3)):
+    for i, losses in enumerate(agent.train(num_iters=100)):
         loss = np.mean(losses)
         message = 'episode: {0}, loss: {1}'.format(i, loss)
         print('{0}{1}{2}'.format(bcolors.HEADER, message, bcolors.ENDC))
