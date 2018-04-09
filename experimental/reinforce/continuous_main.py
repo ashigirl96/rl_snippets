@@ -36,10 +36,9 @@ class Policy(object):
         self.config = config
         self._build_model()
         self._set_loss()
-        optimizer = tf.train.AdamOptimizer(config.learning_rate)
-        # grads_and_vars = optimizer.compute_gradients(self.loss)
-        # self.train_op = optimizer.apply_gradients(grads_and_vars)
-        self.train_op = optimizer.minimize(self.loss)
+        optimizer = tf.train.GradientDescentOptimizer(config.learning_rate)
+        grads_and_vars = optimizer.compute_gradients(self.loss)
+        self.train_op = optimizer.apply_gradients(grads_and_vars)
         
         self.variables = TensorFlowVariables(self.loss, self.sess)
         self.sess.run(tf.global_variables_initializer())
@@ -48,29 +47,29 @@ class Policy(object):
         """Build TensorFlow policy model."""
         # To look clearly, whether I use bias.
         use_bias = self.config.use_bias
-        activation = self.config.activation
         
-        # Placeholders. observ = Box(4,), action = Discrete(2,)
-        # I have to describe which action do I select.
-        self.observ = tf.placeholder(tf.float32, (None, 4), name='observ')
-        self.action = tf.placeholder(tf.int32, name='action')
+        # Placeholders.
+        self.observ = tf.placeholder(tf.float32, (None, 3), name='observ')
+        self.action = tf.placeholder(tf.float32, (None), name='action')
         self.expected_value = tf.placeholder(tf.float32, name='expected_value')
-        # x = tf.layers.dense(self.observ, 100, use_bias=use_bias, activation=activation)
-        x = tf.layers.dense(self.observ, 2, use_bias=use_bias)
-        self.logits = x
-        self.action_probs = tf.nn.softmax(self.logits)
+        
+        # Networks.
+        x = tf.layers.dense(self.observ, 100, use_bias=use_bias)
+        x = tf.layers.dense(x, 100, use_bias=use_bias)
+        x = tf.layers.dense(x, 1, use_bias=use_bias)
+        x = tf.clip_by_value(x, -1., 1.)
+        self.model = x
     
     def _set_loss(self):
-        # For use `tf.nn.sparse_softmax_cross_entropy_with_logits`,
-        # The shape of action should be `(1, ...)`
-        action = self.action[tf.newaxis, ...]
-        log_prob = tf.nn.sparse_softmax_cross_entropy_with_logits(
-            labels=action, logits=self.action_probs)
-        log_prob = log_prob * tf.stop_gradient(self.expected_value)
+        # TODO: How to implement loss function.
+        prob = tf.nn.softmax(self.model)
+        action_prob = self.action
+        losses = prob - action_prob
+        log_prob = -tf.log(losses) * tf.stop_gradient(self.expected_value)
         log_prob = tf.check_numerics(log_prob, 'log_prob')
         self.loss = log_prob
     
-    def compute_action(self, observ, training=True):
+    def compute_action(self, observ):
         """Generate action from \pi(a_t | s_t) that is neural network.
         
         Args:
@@ -79,31 +78,9 @@ class Policy(object):
         Returns:
             (Lights, Camera) Action
         """
-        assert observ.shape == (1, 4)
-        action_probs = self.sess.run(self.action_probs, feed_dict={self.observ: observ})
-        action_probs = np.squeeze(action_probs)
-        
-        # Note selection disappeared only discrete action model.
-        if training:
-            action_probs = eps_greedy(action_probs, self.config.eps)
-            actions = np.arange(len(action_probs))
-            action = int(np.random.choice(actions, size=1, p=action_probs))
-        else:
-            action = greedy(action_probs)
-        assert isinstance(action, int)
-        return action
-
-
-def eps_greedy(action_probs, eps):
-    argmax = np.argmax(action_probs)
-    action_probs = np.ones_like(action_probs) * eps / len(action_probs)
-    action_probs[argmax] += 1 - eps
-    return action_probs
-
-
-def greedy(action_probs):
-    action = int(np.argmax(action_probs))
-    return action
+        assert observ.shape == (1, 2)
+        action = self.sess.run(self.model, feed_dict={self.observ: observ})
+        return action[0]
 
 
 # TODO: I WILL IMPLEMENT.
@@ -162,9 +139,6 @@ class REINFORCE(object):
         trajectories = []
         for _ in range(self.config.num_episodes):
             trajectory = self.compute_trajectory()
-            best_return = trajectory[-1].raw_return
-            message = "Best Return: {0}".format(best_return)
-            print('{0}{1}{2}'.format(bcolors.OKBLUE, message, bcolors.ENDC))
             trajectories.append(trajectory)
         
         losses = []
@@ -174,17 +148,14 @@ class REINFORCE(object):
                     [self.policy.train_op, self.policy.loss], feed_dict={
                         self.policy.observ: transition.observ,
                         self.policy.action: transition.action,
-                        self.policy.expected_value: transition.return_,
-                    })
+                        self.policy.expected_value: transition.return_})
                 losses.append(loss)
         return losses
     
     def train(self, num_iters):
-        saver = tf.train.Saver()
         for i in range(num_iters):
             losses = self._train()
             yield losses
-        saver.save(self.sess, './reinforce_debug')
 
 
 def rollouts(env, policy: Policy, reward_filter: MeanStdFilter, config):
@@ -211,10 +182,12 @@ def rollouts(env, policy: Policy, reward_filter: MeanStdFilter, config):
         next_observ, reward, done, _ = env.step(action)
         
         # This rollout does not provide batch observ and action.
+        # it reshape (2,) → (1, 2), (1,) → (1, 1) for TensorFlow placeholder.
         next_observ = next_observ[np.newaxis, ...]
+        action = action[np.newaxis, ...]
         
         # Adjust reward
-        # reward = reward_filter(reward)
+        reward = reward_filter(reward)
         raw_return += reward
         return_ += reward * config.discount_factor ** t
         
@@ -227,6 +200,21 @@ def rollouts(env, policy: Policy, reward_filter: MeanStdFilter, config):
         if done:
             break
     return trajectory
+
+
+def default_config():
+    # Whether use bias on layer
+    use_bias = False
+    # OpenAI Gym environment name
+    env_name = 'MountainCarContinuous-v0'
+    # Discount Factor (gamma)
+    discount_factor = 0.995
+    # Learning rate
+    learning_rate = 1e-5
+    # Number of episodes
+    num_episodes = 1
+    
+    return locals()
 
 
 def evaluate_policy(policy, config):
@@ -244,7 +232,7 @@ def evaluate_policy(policy, config):
     
     for t in itertools.count():
         # a_t ~ pi(a_t | s_t)
-        action = policy.compute_action(observ, training=False)
+        action = policy.compute_action(observ)
         observ, reward, done, _ = env.step(action)
         observ = observ[np.newaxis, ...]
         raw_return += reward
@@ -254,25 +242,6 @@ def evaluate_policy(policy, config):
     return raw_return
 
 
-def default_config():
-    # Whether use bias on layer
-    use_bias = True
-    # OpenAI Gym environment name
-    env_name = 'CartPole-v0'
-    # Discount Factor (gamma)
-    discount_factor = 1.
-    # Learning rate
-    learning_rate = 1e-4
-    # Number of episodes
-    num_episodes = 1
-    # Activation function used in dense layer
-    activation = tf.nn.relu
-    # Epsilon-Greedy Policy
-    eps = 0.1
-    
-    return locals()
-
-
 def main(_):
     config = AttrDict(default_config())
     # Define Agent that train with REINFORCE algorithm.
@@ -280,25 +249,15 @@ def main(_):
     
     # Train for num_iters times.
     episode_loss = []
-    episode_score = []
-    for i, losses in enumerate(agent.train(num_iters=10)):
+    for i, losses in enumerate(agent.train(num_iters=3)):
         loss = np.mean(losses)
-        # Evaluate the policy so that it will mean score.
-        score = np.mean([evaluate_policy(agent.policy, config) for _ in range(5)])
-        message = 'episode: {0}, loss: {1}, score: {2}'.format(i, loss, score)
+        message = 'episode: {0}, loss: {1}'.format(i, loss)
         print('{0}{1}{2}'.format(bcolors.HEADER, message, bcolors.ENDC))
         episode_loss.append(loss)
-        episode_score.append(score)
     x = np.arange(len(episode_loss))
-    fig, (axL, axR) = plt.subplots(nrows=2, figsize=(10, 10))
-    axL.plot(x, episode_loss)
-    axL.legend(['loss'])
-    axR.plot(x, episode_score, color='red')
-    axR.legend(['score'])
+    plt.plot(x, episode_loss)
     plt.show()
 
 
 if __name__ == '__main__':
-    tf.set_random_seed(42)
-    np.random.seed(42)
     tf.app.run()

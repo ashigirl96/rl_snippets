@@ -1,4 +1,4 @@
-from experimental.reinforce.main import *
+from experimental.reinforce.discrete_main import *
 
 
 def test_main():
@@ -62,8 +62,20 @@ def plot_loss_score():
     plt.show()
 
 
+def test_evaluate():
+    sess = tf.Session()
+    config = AttrDict(default_config())
+    policy = Policy(sess, config)
+    saver = tf.train.Saver()
+    saver.restore(sess, './reinforce_deubgging')
+    
+    score = np.mean([evaluate_policy(policy, config) for _ in range(10)])
+    print(score)
+
+
 def main(_):
-    plot_loss_score()
+    test_evaluate()
+
 
 if __name__ == '__main__':
     tf.app.run()

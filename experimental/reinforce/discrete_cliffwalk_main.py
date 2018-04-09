@@ -7,7 +7,6 @@ from __future__ import print_function
 import itertools
 
 import collections
-import gym
 import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
@@ -16,6 +15,7 @@ from agents.tools.wrappers import ConvertTo32Bit
 from ray.experimental.tfutils import TensorFlowVariables
 from ray.rllib.utils.filter import MeanStdFilter
 
+from experimental.denny_cliff_walk import CliffWalkingEnv
 from reinforce.utils import bcolors
 
 Transition = collections.namedtuple('Transition',
@@ -52,11 +52,14 @@ class Policy(object):
         
         # Placeholders. observ = Box(4,), action = Discrete(2,)
         # I have to describe which action do I select.
-        self.observ = tf.placeholder(tf.float32, (None, 4), name='observ')
+        self.observ = tf.placeholder(tf.int32, (None, 1), name='observ')
         self.action = tf.placeholder(tf.int32, name='action')
         self.expected_value = tf.placeholder(tf.float32, name='expected_value')
-        # x = tf.layers.dense(self.observ, 100, use_bias=use_bias, activation=activation)
-        x = tf.layers.dense(self.observ, 2, use_bias=use_bias)
+        
+        one_hot_observ = tf.one_hot(self.observ, int(CliffWalkingEnv().observation_space.n))
+        x = tf.layers.dense(one_hot_observ, 100, use_bias=use_bias, activation=activation)
+        x = tf.layers.dense(x, 100, use_bias=use_bias, activation=activation)
+        x = tf.layers.dense(x, CliffWalkingEnv().action_space.n, use_bias=use_bias)
         self.logits = x
         self.action_probs = tf.nn.softmax(self.logits)
     
@@ -70,7 +73,7 @@ class Policy(object):
         log_prob = tf.check_numerics(log_prob, 'log_prob')
         self.loss = log_prob
     
-    def compute_action(self, observ, training=True):
+    def compute_action(self, observ):
         """Generate action from \pi(a_t | s_t) that is neural network.
         
         Args:
@@ -79,17 +82,13 @@ class Policy(object):
         Returns:
             (Lights, Camera) Action
         """
-        assert observ.shape == (1, 4)
-        action_probs = self.sess.run(self.action_probs, feed_dict={self.observ: observ})
+        action_probs = self.sess.run(self.action_probs, feed_dict={self.observ: np.asarray([observ])})
         action_probs = np.squeeze(action_probs)
         
         # Note selection disappeared only discrete action model.
-        if training:
-            action_probs = eps_greedy(action_probs, self.config.eps)
-            actions = np.arange(len(action_probs))
-            action = int(np.random.choice(actions, size=1, p=action_probs))
-        else:
-            action = greedy(action_probs)
+        action_probs = eps_greedy(action_probs, self.config.eps)
+        actions = np.arange(len(action_probs))
+        action = int(np.random.choice(actions, size=1, p=action_probs))
         assert isinstance(action, int)
         return action
 
@@ -100,10 +99,6 @@ def eps_greedy(action_probs, eps):
     action_probs[argmax] += 1 - eps
     return action_probs
 
-
-def greedy(action_probs):
-    action = int(np.argmax(action_probs))
-    return action
 
 
 # TODO: I WILL IMPLEMENT.
@@ -137,7 +132,8 @@ class REINFORCE(object):
         tf.reset_default_graph()
         self.sess = tf.Session()
         
-        env = gym.make(config.env_name)
+        # env = gym.make(config.env_name)
+        env = CliffWalkingEnv()
         self.config = config
         self.env = ConvertTo32Bit(env)
         self.policy = Policy(sess=self.sess, config=config)
@@ -162,9 +158,6 @@ class REINFORCE(object):
         trajectories = []
         for _ in range(self.config.num_episodes):
             trajectory = self.compute_trajectory()
-            best_return = trajectory[-1].raw_return
-            message = "Best Return: {0}".format(best_return)
-            print('{0}{1}{2}'.format(bcolors.OKBLUE, message, bcolors.ENDC))
             trajectories.append(trajectory)
         
         losses = []
@@ -174,17 +167,14 @@ class REINFORCE(object):
                     [self.policy.train_op, self.policy.loss], feed_dict={
                         self.policy.observ: transition.observ,
                         self.policy.action: transition.action,
-                        self.policy.expected_value: transition.return_,
-                    })
+                        self.policy.expected_value: transition.return_})
                 losses.append(loss)
         return losses
     
     def train(self, num_iters):
-        saver = tf.train.Saver()
         for i in range(num_iters):
             losses = self._train()
             yield losses
-        saver.save(self.sess, './reinforce_debug')
 
 
 def rollouts(env, policy: Policy, reward_filter: MeanStdFilter, config):
@@ -236,7 +226,8 @@ def evaluate_policy(policy, config):
     Returns:
         score
     """
-    env = gym.make(config.env_name)
+    env = CliffWalkingEnv()
+    # env = gym.make(config.env_name)
     
     raw_return = 0
     observ = env.reset()
@@ -244,7 +235,7 @@ def evaluate_policy(policy, config):
     
     for t in itertools.count():
         # a_t ~ pi(a_t | s_t)
-        action = policy.compute_action(observ, training=False)
+        action = policy.compute_action(observ)
         observ, reward, done, _ = env.step(action)
         observ = observ[np.newaxis, ...]
         raw_return += reward
@@ -258,17 +249,17 @@ def default_config():
     # Whether use bias on layer
     use_bias = True
     # OpenAI Gym environment name
-    env_name = 'CartPole-v0'
+    # env_name = 'CartPole-v0'
     # Discount Factor (gamma)
-    discount_factor = 1.
+    discount_factor = 0.995
     # Learning rate
-    learning_rate = 1e-4
+    learning_rate = 1e-5
     # Number of episodes
     num_episodes = 1
     # Activation function used in dense layer
     activation = tf.nn.relu
     # Epsilon-Greedy Policy
-    eps = 0.1
+    eps = 0.3
     
     return locals()
 
@@ -281,7 +272,7 @@ def main(_):
     # Train for num_iters times.
     episode_loss = []
     episode_score = []
-    for i, losses in enumerate(agent.train(num_iters=10)):
+    for i, losses in enumerate(agent.train(num_iters=10_000)):
         loss = np.mean(losses)
         # Evaluate the policy so that it will mean score.
         score = np.mean([evaluate_policy(agent.policy, config) for _ in range(5)])
@@ -299,6 +290,4 @@ def main(_):
 
 
 if __name__ == '__main__':
-    tf.set_random_seed(42)
-    np.random.seed(42)
     tf.app.run()
