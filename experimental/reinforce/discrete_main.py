@@ -55,22 +55,21 @@ class Policy(object):
         self.observ = tf.placeholder(tf.float32, (None, 4), name='observ')
         self.action = tf.placeholder(tf.int32, name='action')
         self.expected_value = tf.placeholder(tf.float32, name='expected_value')
-        # x = tf.layers.dense(self.observ, 100, use_bias=use_bias, activation=activation)
-        x = tf.layers.dense(self.observ, 2, use_bias=use_bias)
+        x = tf.layers.dense(self.observ, 2, use_bias=use_bias,
+                            kernel_initializer=tf.zeros_initializer,
+                            bias_initializer=tf.ones_initializer)
         self.logits = x
-        self.action_probs = tf.nn.softmax(self.logits)
+        self.action_probs = tf.squeeze(tf.nn.softmax(self.logits))
+        self.picked_action_prob = tf.gather(self.action_probs, self.action)
     
     def _set_loss(self):
         # For use `tf.nn.sparse_softmax_cross_entropy_with_logits`,
         # The shape of action should be `(1, ...)`
-        action = self.action[tf.newaxis, ...]
-        log_prob = tf.nn.sparse_softmax_cross_entropy_with_logits(
-            labels=action, logits=self.action_probs)
-        log_prob = log_prob * tf.stop_gradient(self.expected_value)
+        log_prob = -tf.log(self.picked_action_prob) * self.expected_value
         log_prob = tf.check_numerics(log_prob, 'log_prob')
         self.loss = log_prob
     
-    def compute_action(self, observ, training=True):
+    def compute_action(self, observ):
         """Generate action from \pi(a_t | s_t) that is neural network.
         
         Args:
@@ -84,13 +83,8 @@ class Policy(object):
         action_probs = np.squeeze(action_probs)
         
         # Note selection disappeared only discrete action model.
-        if training:
-            action_probs = eps_greedy(action_probs, self.config.eps)
-            actions = np.arange(len(action_probs))
-            action = int(np.random.choice(actions, size=1, p=action_probs))
-        else:
-            action = greedy(action_probs)
-        assert isinstance(action, int)
+        action = np.random.choice(np.arange(len(action_probs)), p=action_probs).astype(np.int64)
+        assert isinstance(action, np.int64)
         return action
 
 
@@ -120,15 +114,28 @@ class ValueFunction(object):
         self.config = config
         self._build_model()
         self._set_loss()
-        optimizer = tf.train.GradientDescentOptimizer(config.learning_rate)
-        grads_and_vars = optimizer.compute_gradients(self.loss)
-        self.train_op = optimizer.apply_gradients(grads_and_vars)
+        optimizer = tf.train.AdamOptimizer(config.learning_rate)
+        self.train_op = optimizer.minimize(self.loss)
         
         self.variables = TensorFlowVariables(self.loss, self.sess)
         self.sess.run(tf.global_variables_initializer())
     
     def _build_model(self):
-        pass
+        # To look clearly, whether I use bias.
+        use_bias = self.config.use_bias
+        activation = self.config.activation
+        
+        self.observ = tf.placeholder(tf.float32, (None, 4), name='observ')
+        self.return_ = tf.placeholder(tf.float32, name='return_')
+        x = tf.layers.dense(self.observ, 1, use_bias=use_bias,
+                            kernel_initializer=tf.zeros_initializer,
+                            bias_initializer=tf.zeros_initializer)
+        self.logits = x
+    
+    def _set_loss(self):
+        losses = tf.losses.mean_squared_error(labels=self.return_,
+                                              predictions=self.logits)
+        self.loss = tf.reduce_mean(losses)
 
 
 class REINFORCE(object):
@@ -141,6 +148,7 @@ class REINFORCE(object):
         self.config = config
         self.env = ConvertTo32Bit(env)
         self.policy = Policy(sess=self.sess, config=config)
+        self.value_func = ValueFunction(sess=self.sess, config=config)
         
         self._init()
     
@@ -170,11 +178,19 @@ class REINFORCE(object):
         losses = []
         for trajectory in trajectories:
             for transition in trajectory:
+                _, loss, expected_return = self.sess.run(
+                    [self.value_func.train_op, self.value_func.loss, self.value_func.logits],
+                    feed_dict={
+                        self.value_func.observ: transition.observ,
+                        self.value_func.return_: transition.return_,
+                    })
+                advantage = transition.return_ - expected_return
                 _, loss = self.sess.run(
                     [self.policy.train_op, self.policy.loss], feed_dict={
                         self.policy.observ: transition.observ,
                         self.policy.action: transition.action,
-                        self.policy.expected_value: transition.return_,
+                        # self.policy.expected_value: transition.return_,
+                        self.policy.expected_value: advantage,
                     })
                 losses.append(loss)
         return losses
@@ -244,7 +260,7 @@ def evaluate_policy(policy, config):
     
     for t in itertools.count():
         # a_t ~ pi(a_t | s_t)
-        action = policy.compute_action(observ, training=False)
+        action = policy.compute_action(observ)
         observ, reward, done, _ = env.step(action)
         observ = observ[np.newaxis, ...]
         raw_return += reward
@@ -281,7 +297,7 @@ def main(_):
     # Train for num_iters times.
     episode_loss = []
     episode_score = []
-    for i, losses in enumerate(agent.train(num_iters=10)):
+    for i, losses in enumerate(agent.train(num_iters=1000)):
         loss = np.mean(losses)
         # Evaluate the policy so that it will mean score.
         score = np.mean([evaluate_policy(agent.policy, config) for _ in range(5)])
@@ -289,7 +305,7 @@ def main(_):
         print('{0}{1}{2}'.format(bcolors.HEADER, message, bcolors.ENDC))
         episode_loss.append(loss)
         episode_score.append(score)
-    x = np.arange(len(episode_loss))
+        x = np.arange(len(episode_loss))
     fig, (axL, axR) = plt.subplots(nrows=2, figsize=(10, 10))
     axL.plot(x, episode_loss)
     axL.legend(['loss'])
