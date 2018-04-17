@@ -4,83 +4,75 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from collections import namedtuple
+import itertools
 
+import collections
 import gym
 import numpy as np
-import ray
-import tensorflow as tf
-from tensorflow import keras
-from ray.rllib.ppo import PPOAgent
-
 from reinforce.policy import Policy
-from reinforce.agent import Agent
 
-ray.init()
-ray.error_info()
-
-Timestep = namedtuple('Timestep', ['observ', 'action', 'reward'])
+Transition = collections.namedtuple('Transition',
+                                    'observ, reward, done, action, next_observ, raw_return, return_')
+Transition.__new__.__defaults__ = (None,) * len(Transition._fields)
 
 
 def rollouts(env, policy: Policy):
-  """
-  EXERCISE:
-    Fill out this function by copying the 'random_rollout' function
-    and then modifying it to choose the action using the policy.
-  
-  Args:
-    env: Environment of OpenAI Gym
-    policy: Agent's Policy
+    """
+    Args:
+        env: OpenAI Gym wrapped by agents.wrappers
+        policy(Policy): instance of Policy
+        reward_filter(MeanStdFilter): Use ray's MeanStdFilter for calculate easier
 
-  Returns:
-    cumulative_reward: Discounted episodic return
-  """
-  observ = env.reset()
-  observ = observ[np.newaxis, ...]
-  
-  done = False
-  cumulative_reward = 0
-  
-  trajectory = list()
-  
-  while not done:
-    # Choose a random action (either 0 or 1)
-    action = tf.cast(policy.predict(observ) > 0., tf.float32)
-    action = tf.squeeze(action)
-    action = int(action.numpy())
+    Returns:
+        1 episode(rollout) that is sequence of trajectory.
+    """
+    raw_return = 0
+    return_ = 0
+    observ = env.reset()
+    observ = observ[np.newaxis, ...]
     
-    # Take the action in the env.
-    observ_, reward, done, _ = env.step(action)
-    observ_ = observ_[np.newaxis, ...]
+    trajectory = []
+    for t in itertools.count():
+        # a_t ~ pi(a_t | s_t)
+        action = policy.compute_action(observ)
+        
+        next_observ, reward, done, _ = env.step(action)
+        
+        # This rollout does not provide batch observ and action.
+        next_observ = next_observ[np.newaxis, ...]
+        
+        # Make trajectory sample.
+        trajectory.append(Transition(observ, reward, done, action, next_observ, raw_return, return_))
+        
+        if done:
+            break
+        
+        # s_{t+1} ← s_{t}
+        observ = next_observ
+    return trajectory
+
+
+def evaluate_policy(policy, config):
+    """
+    Args:
+        policy(Policy): instance of Policy
+    Returns:
+        score
+    """
+    # env = gym.make(config.env_name)
+    env = gym.make('CartPole-v0')
     
-    # Update the cumulative reward.
-    cumulative_reward += reward
-    trajectory.append(Timestep(observ, action, reward))
+    raw_return = 0
+    observ = env.reset()
+    observ = observ[np.newaxis, ...]
     
-    observ = observ_
-    
-  # Return the cumulative reward.
-  return trajectory
-
-
-@ray.remote
-def evaluate_policy(num_rollouts):
-  # Generate a random policy.
-  policy = Policy()
-  
-  # Create an environment.
-  env = gym.make('CartPole-v0')
-  
-  # Evaluate the same policy multiple times
-  # and then take the average in order to evaluate the policy more accurately
-  trajectory = rollouts(env, policy)
-  
-  
-
-
-def main():
-  tf.enable_eager_execution()
-
-
-if __name__ == '__main__':
-  main()
+    for t in itertools.count():
+        # a_t ~ pi(a_t | s_t)
+        action = policy.compute_action(observ)
+        observ, reward, done, _ = env.step(action)
+        observ = observ[np.newaxis, ...]
+        raw_return += reward
+        
+        if done:
+            break
+    return raw_return

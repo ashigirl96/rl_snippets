@@ -1,50 +1,50 @@
 """main file coded the reinforce algorithm.
 I will replace this code to reusability."""
-
-from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import gym
+import numpy as np
 import tensorflow as tf
 from agents.tools import AttrDict
 
-from reinforce.policy import Policy, policy_gradient
-from reinforce.rollout import rollouts
-from reinforce.utils import discounted_return
+from reinforce.agent import REINFORCE
+from reinforce.rollout import evaluate_policy
 
 
 def default_config():
-  num_episodes = 10
-  num_iters = 5
-  lr = 0.001
-  discount_factor = 0.99
-  
-  return locals()
+    # Whether use bias on layer
+    use_bias = True
+    # OpenAI Gym environment name
+    env_name = 'CartPole-v0'
+    # Discount Factor (gamma)
+    discount_factor = 1.
+    # Learning rate
+    learning_rate = 0.1
+    # Number of episodes
+    num_episodes = 200
+    # Activation function used in dense layer
+    activation = tf.nn.relu
+    # Epsilon-Greedy Policy
+    eps = 0.1
+    
+    return locals()
 
 
 def main(_):
-  config = AttrDict(default_config())
-  
-  policy = Policy()
-  optimizer = tf.train.GradientDescentOptimizer(5e-1)
-  
-  env = gym.make('CartPole-v0')
-  
-  for _ in range(config.num_iters):
-    trajectories = []
-    for i in range(config.num_episodes):
-      trajectory = rollouts(env, policy)
-      trajectories.append(trajectory)
+    config = AttrDict(default_config())
+    # Define Agent that train with REINFORCE algorithm.
+    agent = REINFORCE(config)
     
-    for trajectory in trajectories:
-      for t, timestep in enumerate(trajectory):
-        rewards = [traj.reward for traj in trajectory[t:]]
-        return_ = discounted_return(config.discount_factor, rewards)
-        # grad = policy_gradient(policy, timestep.observ, return_)
-        optimizer.apply_gradients(policy_gradient(policy, timestep.observ, return_))
+    # Train for num_iters times.
+    for i, (policy_loss, val_func_loss) in enumerate(agent.train(config.num_episodes)):
+        print('\rEpisode {}/{} policy loss ({}), value loss ({}), eval ({})'.format(
+            i, config.num_episodes,
+            np.mean(policy_loss), np.mean(val_func_loss),
+            np.mean([evaluate_policy(agent.policy, config) for i in range(5)])),
+            end='', flush=True)
 
 
 if __name__ == '__main__':
-  tf.enable_eager_execution()
-  tf.app.run()
+    tf.set_random_seed(42)
+    np.random.seed(42)
+    tf.app.run()
