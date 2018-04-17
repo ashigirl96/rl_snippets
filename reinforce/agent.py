@@ -50,9 +50,12 @@ class REINFORCE(object):
         value_func_losses = []
         for t, transition in enumerate(trajectory):
             baseline = self.value_func.predict(transition.observ)
-            return_ = sum(1. ** i * t.reward for i, t in enumerate(trajectory[t:]))
+            return_ = sum(.995 ** i * t.reward for i, t in enumerate(trajectory[t:]))
+            # Compute advantage.
             advantage = return_ - baseline
+            # Apply value function gradients.
             loss_ = self.value_func.apply(transition.observ, return_)
+            # Apply policy gradients.
             loss = self.policy.apply(transition.observ, transition.action, advantage)
             policy_losses.append(loss)
             value_func_losses.append(loss_)
@@ -63,4 +66,5 @@ class REINFORCE(object):
         for _ in range(num_episodes):
             losses = self._train()
             yield losses
-        saver.save(self.sess, './reinforce_debug')
+        saver.save(self.sess, './checkpoints/reinforce_debug')
+        

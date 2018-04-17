@@ -13,6 +13,8 @@ import tensorflow as tf
 from agents.tools.attr_dict import AttrDict
 from agents.tools.wrappers import ConvertTo32Bit
 from ray.experimental.tfutils import TensorFlowVariables
+import matplotlib.pyplot as plt
+from reinforce.utils import plot_agent_stats
 
 Transition = collections.namedtuple('Transition',
                                     'observ, reward, done, action, next_observ, raw_return, return_')
@@ -279,13 +281,24 @@ def main(_):
     # Define Agent that train with REINFORCE algorithm.
     agent = REINFORCE(config)
     
+    mean_policy_losses = []
+    mean_valfunc_losses = []
+    mean_evals = []
+
     # Train for num_iters times.
     for i, (policy_loss, val_func_loss) in enumerate(agent.train(config.num_episodes)):
+        mean_policy_losses.append(np.mean(policy_loss))
+        mean_valfunc_losses.append(np.mean(val_func_loss))
+        mean_evals.append(np.mean([evaluate_policy(agent.policy, config) for _ in range(5)]))
+    
         print('\rEpisode {}/{} policy loss ({}), value loss ({}), eval ({})'.format(
             i, config.num_episodes,
-            np.mean(policy_loss), np.mean(val_func_loss),
-            np.mean([evaluate_policy(agent.policy, config) for i in range(5)])),
+            mean_policy_losses[-1], mean_valfunc_losses[-1], mean_evals[-1]),
             end='', flush=True)
+
+    stats = [mean_policy_losses, mean_valfunc_losses, mean_evals]
+    plot_agent_stats(stats)
+    plt.show()
 
 
 if __name__ == '__main__':
