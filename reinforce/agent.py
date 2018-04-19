@@ -32,8 +32,8 @@ class REINFORCE(object):
         self.config = config
         self.env = ConvertTo32Bit(env)
         with tf.device('/cpu:0'):
-            self.policy = Policy(sess=self.sess, config=config)
-            self.value_func = ValueFunction(sess=self.sess, config=config)
+            self.policy = Policy(config=config, sess=self.sess)
+            self.value_func = ValueFunction(config=config,sess=self.sess)
         self._init()
     
     def _init(self):
@@ -85,6 +85,14 @@ class REINFORCE(object):
         saver.save(self.sess, './checkpoints/reinforce_debug')
     
     def evaluate(self, remote_policies):
+        """Evaluate agent to use remote policies.
+        
+        Args:
+            remote_policies:
+
+        Returns:
+
+        """
         weights = self.policy.get_weights()
         weights_id = ray.put(weights)
         

@@ -20,15 +20,14 @@ Transition.__new__.__defaults__ = (None,) * len(Transition._fields)
 
 class Policy(object):
     
-    def __init__(self, sess: tf.Session, config):
+    def __init__(self, config, sess=None):
         """Neural network policy that compute action given observation.
         
         Args:
             config: Useful configuration, almost use as const.
         """
-        self.sess = sess
-        
-        self.config = config
+        self._sess = sess or tf.Session()
+        self._config = config
         self._build_model()
         self._set_loss()
         
@@ -39,12 +38,17 @@ class Policy(object):
         self.train_op = optimizer.apply_gradients(grads_and_vars)
         # self.train_op = optimizer.minimize(self.loss)
         
-        self.variables = TensorFlowVariables(self.loss, self.sess)
+        self.variables = TensorFlowVariables(self.loss, self._sess)
+        
+        # Use for remote agents that evaluate policy.
+        if sess:
+            init = tf.global_variables_initializer()
+            self._sess.run(init)
     
     def _build_model(self):
         """Build TensorFlow policy model."""
         # To look clearly, whether I use bias.
-        use_bias = self.config.use_bias
+        use_bias = self._config.use_bias
         
         # Placeholders. observ = Box(4,), action = Discrete(2,)
         # I have to describe which action do I select.
@@ -65,7 +69,7 @@ class Policy(object):
         log_prob = tf.check_numerics(log_prob, 'log_prob')
         self.loss = log_prob
     
-    def compute_action(self, observ):
+    def compute_action(self, observ, training=True):
         """Generate action from \pi(a_t | s_t) that is neural network.
         
         Args:
@@ -75,10 +79,13 @@ class Policy(object):
             Action
         """
         assert observ.shape == (1, 4)
-        action_probs = self.sess.run(self.action_probs, feed_dict={self.observ: observ})
+        action_probs = self._sess.run(self.action_probs, feed_dict={self.observ: observ})
         
         # Note selection disappeared only discrete action model.
-        action = np.random.choice(np.arange(len(action_probs)), p=action_probs).astype(np.int64)
+        if training:
+            action = np.random.choice(np.arange(len(action_probs)), p=action_probs).astype(np.int64)
+        else:
+            action = np.argmax(action_probs).astype(np.int64)
         assert isinstance(action, np.int64)
         return action
     
@@ -92,7 +99,7 @@ class Policy(object):
         Returns:
             loss: loss of train operation.
         """
-        _, loss = self.sess.run(
+        _, loss = self._sess.run(
             [self.train_op, self.loss], feed_dict={
                 self.observ: observ,
                 self.action: action,
@@ -103,20 +110,44 @@ class Policy(object):
     
     def get_weights(self):
         return self.variables.get_weights()
+    
+    def evaluate(self, new_weights):
+        """Evaluate one episodes and return score.
+        
+        Returns:
+            score
+        """
+        env = gym.make('CartPole-v0')
+        self.variables.set_weights(new_weights)
+        
+        raw_return = 0
+        observ = env.reset()
+        observ = observ[np.newaxis, ...]
+        
+        for t in itertools.count():
+            # a_t ~ pi(a_t | s_t)
+            action = self.compute_action(observ, False)
+            observ, reward, done, _ = env.step(action)
+            observ = observ[np.newaxis, ...]
+            raw_return += reward
+            
+            if done:
+                break
+        return raw_return
 
 
 # TODO: I WILL IMPLEMENT.
 class ValueFunction(object):
     
-    def __init__(self, sess: tf.Session, config):
+    def __init__(self, config, sess=None):
         """Neural network policy that compute action given observation.
         
         Args:
             config: Useful configuration, almost use as const.
         """
-        self.sess = sess
+        self._sess = sess
         
-        self.config = config
+        self._config = config
         self._build_model()
         self._set_loss()
         device = '/gpu:0' if config.use_gpu else '/cpu:0'
@@ -124,11 +155,11 @@ class ValueFunction(object):
             optimizer = tf.train.AdamOptimizer(0.001)
         self.train_op = optimizer.minimize(self.loss)
         
-        self.variables = TensorFlowVariables(self.loss, self.sess)
+        self.variables = TensorFlowVariables(self.loss, self._sess)
     
     def _build_model(self):
         # To look clearly, whether I use bias.
-        use_bias = self.config.use_bias
+        use_bias = self._config.use_bias
         
         self.observ = tf.placeholder(tf.float32, (None, 4), name='observ')
         self.return_ = tf.placeholder(tf.float32, name='return_')
@@ -142,110 +173,17 @@ class ValueFunction(object):
         self.loss = tf.reduce_mean(losses)
     
     def predict(self, observ):
-        baseline = self.sess.run([self.logits],
-                                 feed_dict={self.observ: observ})
+        baseline = self._sess.run([self.logits],
+                                  feed_dict={self.observ: observ})
         return baseline
     
     def apply(self, observ, return_):
-        _, loss = self.sess.run([self.train_op, self.loss],
-                                feed_dict={self.observ: observ, self.return_: return_})
+        _, loss = self._sess.run([self.train_op, self.loss],
+                                 feed_dict={self.observ: observ, self.return_: return_})
         return loss
     
     def get_weights(self):
         return self.variables.get_weights()
 
 
-@ray.remote
-class RemotePolicy(object):
-    
-    def __init__(self, config):
-        """Neural network policy that compute action given observation.
-        
-        Args:
-            config: Useful configuration, almost use as const.
-        """
-        self.sess = tf.Session()
-        
-        self.config = config
-        self._build_model()
-        self._set_loss()
-        
-        device = '/gpu:0' if config.use_gpu else '/cpu:0'
-        with tf.device(device):
-            optimizer = tf.train.AdamOptimizer(0.01)
-        grads_and_vars = optimizer.compute_gradients(self.loss)
-        self.train_op = optimizer.apply_gradients(grads_and_vars)
-        # self.train_op = optimizer.minimize(self.loss)
-        
-        init = tf.global_variables_initializer()
-        self.variables = TensorFlowVariables(self.loss, self.sess)
-        
-        # initialize all variables.
-        self.sess.run(init)
-    
-    def _build_model(self):
-        """Build TensorFlow policy model."""
-        # To look clearly, whether I use bias.
-        use_bias = self.config.use_bias
-        
-        # Placeholders. observ = Box(4,), action = Discrete(2,)
-        # I have to describe which action do I select.
-        self.observ = tf.placeholder(tf.float32, (None, 4), name='observ')
-        self.action = tf.placeholder(tf.int32, name='action')
-        self.expected_value = tf.placeholder(tf.float32, name='expected_value')
-        x = tf.layers.dense(self.observ, 2, use_bias=use_bias,
-                            kernel_initializer=tf.zeros_initializer,
-                            activation=None)
-        self.logits = x
-        self.action_probs = tf.squeeze(tf.nn.softmax(self.logits))
-    
-    def _set_loss(self):
-        # For use `tf.nn.sparse_softmax_cross_entropy_with_logits`,
-        # The shape of action should be `(1, ...)`
-        picked_action_prob = tf.gather(self.action_probs, self.action)
-        log_prob = -tf.log(picked_action_prob) * self.expected_value
-        log_prob = tf.check_numerics(log_prob, 'log_prob')
-        self.loss = log_prob
-    
-    def compute_action(self, observ):
-        """Generate action from \pi(a_t | s_t) that is neural network.
-        
-        Args:
-            observ: Observation generated by gym.Env.observation.
-
-        Returns:
-            Action
-        """
-        assert observ.shape == (1, 4)
-        action_probs = self.sess.run(self.action_probs, feed_dict={self.observ: observ})
-        action = np.argmax(action_probs).astype(np.int64)
-        
-        # Note selection disappeared only discrete action model.
-        assert isinstance(action, np.int64)
-        return action
-    
-    def evaluate(self, new_weights):
-        """
-        Returns:
-            score
-        """
-        env = gym.make('CartPole-v0')
-        self.variables.set_weights(new_weights)
-        
-        raw_return = 0
-        observ = env.reset()
-        observ = observ[np.newaxis, ...]
-        
-        for t in itertools.count():
-            # a_t ~ pi(a_t | s_t)
-            action = self.compute_action(observ)
-            observ, reward, done, _ = env.step(action)
-            observ = observ[np.newaxis, ...]
-            raw_return += reward
-            
-            if done:
-                break
-        return raw_return
-
-    def get_weights(self):
-        return self.variables.get_weights()
+RemotePolicy = ray.remote(Policy)

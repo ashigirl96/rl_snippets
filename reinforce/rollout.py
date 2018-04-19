@@ -55,7 +55,7 @@ def rollouts(env, policy: Policy):
     return trajectory
 
 
-def evaluate_policy(policy, config):
+def evaluate_policy(policy):
     """
     Args:
         policy(Policy): instance of Policy
