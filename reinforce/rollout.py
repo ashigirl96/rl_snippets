@@ -9,6 +9,9 @@ import itertools
 import collections
 import gym
 import numpy as np
+import ray
+import tensorflow as tf
+
 from reinforce.policy import Policy
 
 Transition = collections.namedtuple('Transition',

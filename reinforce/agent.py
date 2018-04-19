@@ -21,14 +21,14 @@ class REINFORCE(object):
     
     def __init__(self, config):
         tf.reset_default_graph()
-        self.sess = tf.Session()
+        self.sess = tf.Session(config=config.sess_config)
         
         env = gym.make(config.env_name)
         self.config = config
         self.env = ConvertTo32Bit(env)
-        self.policy = Policy(sess=self.sess, config=config)
-        self.value_func = ValueFunction(sess=self.sess, config=config)
-        
+        with tf.device('/cpu:0'):
+            self.policy = Policy(sess=self.sess, config=config)
+            self.value_func = ValueFunction(sess=self.sess, config=config)
         self._init()
     
     def _init(self):
@@ -45,18 +45,20 @@ class REINFORCE(object):
         Returns: Losses each timestep.
         """
         trajectory = self.compute_trajectory()
+        discount_factor = self.config.discount_factor
         
         policy_losses = []
         value_func_losses = []
         for t, transition in enumerate(trajectory):
             baseline = self.value_func.predict(transition.observ)
-            return_ = sum(.995 ** i * t.reward for i, t in enumerate(trajectory[t:]))
+            return_ = sum(discount_factor ** i * t_.reward for i, t_ in enumerate(trajectory[t:]))
             # Compute advantage.
             advantage = return_ - baseline
             # Apply value function gradients.
             loss_ = self.value_func.apply(transition.observ, return_)
             # Apply policy gradients.
-            loss = self.policy.apply(transition.observ, transition.action, advantage)
+            # loss = self.policy.apply(transition.observ, transition.action, advantage)
+            loss = self.policy.apply(transition.observ, transition.action, return_)
             policy_losses.append(loss)
             value_func_losses.append(loss_)
         return policy_losses, value_func_losses
