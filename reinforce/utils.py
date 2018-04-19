@@ -26,10 +26,11 @@ def get_available_gpus():
     return [x.name for x in local_device_protos if x.device_type == 'GPU']
 
 
-def plot_agent_stats(stats, window=5):
-    df = pd.DataFrame({'policy_loss': stats[0],
-                 'value_func_loss': stats[1],
-                 'eval': stats[2]})
+def plot_agent_stats(results, window=5):
+    policy_loss, val_loss, eval = [result for result in zip(*results)]
+    df = pd.DataFrame({'policy_loss': policy_loss,
+                 'value_func_loss': val_loss,
+                 'eval': eval})
     df = df.rolling(window=window)
     df = df.mean()
     

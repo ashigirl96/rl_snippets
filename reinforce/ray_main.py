@@ -3,6 +3,8 @@ I will replace this code to reusability."""
 from __future__ import division
 from __future__ import print_function
 
+import time
+
 import matplotlib.pyplot as plt
 import numpy as np
 import ray
@@ -11,7 +13,6 @@ from agents.tools import AttrDict
 
 from reinforce.agent import REINFORCE
 from reinforce.policy import RemotePolicy
-from reinforce.rollout import evaluate_policy
 from reinforce.utils import plot_agent_stats
 
 
@@ -25,7 +26,7 @@ def default_config():
     # Learning rate
     learning_rate = 0.1
     # Number of episodes
-    num_episodes = 100
+    num_episodes = 200
     # Activation function used in dense layer
     activation = tf.nn.relu
     # Epsilon-Greedy Policy
@@ -40,8 +41,6 @@ def default_config():
 
 
 def main(_):
-    remote_evaluate_policy = ray.remote(evaluate_policy)
-    import time
     start_time = time.time()
     
     config = AttrDict(default_config())
@@ -50,33 +49,25 @@ def main(_):
     
     remote_policies = [RemotePolicy.remote(config) for _ in range(5)]
     
-    mean_policy_losses = []
-    mean_valfunc_losses = []
-    mean_evals = []
+    train_results = []
     
     # Train for num_iters times.
-    for i, (policy_loss, val_func_loss) in enumerate(agent.train(config.num_episodes)):
-        mean_policy_losses.append(np.mean(policy_loss))
-        mean_valfunc_losses.append(np.mean(val_func_loss))
-        weights = agent.policy.get_weights()
-        weights_id = ray.put(weights)
+    for i, result in enumerate(agent.train(config.num_episodes)):
+        evals = agent.evaluate(remote_policies)
+        result = result._replace(eval=np.mean(evals))
         
-        evaluate_ids = [remote_policies[i].evaluate.remote(weights_id) for i in range(5)]
-        evals = ray.get(evaluate_ids)
-        mean_evals.append(np.mean(evals))
-
         print('\rEpisode {}/{} policy loss ({}), value loss ({}), eval ({})'.format(
             i, config.num_episodes,
-            mean_policy_losses[-1], mean_valfunc_losses[-1], mean_evals[-1]),
+            result.policy_loss, result.val_loss, result.eval),
             end='', flush=True)
-
-    stats = [mean_policy_losses, mean_valfunc_losses, mean_evals]
-
+        
+        train_results.append(result)
+    
     end_time = time.time()
     duration = end_time - start_time
     print('\nProcess duration: {0}[s]'.format(duration))
-
-    plot_agent_stats(stats)
+    
+    plot_agent_stats(train_results)
     plt.show()
 
 
