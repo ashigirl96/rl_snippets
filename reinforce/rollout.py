@@ -9,8 +9,6 @@ import itertools
 import collections
 import gym
 import numpy as np
-import ray
-import tensorflow as tf
 
 from reinforce.policy import Policy
 
@@ -79,3 +77,33 @@ def evaluate_policy(policy):
         if done:
             break
     return raw_return
+
+
+
+def video_evaluate_policy(policy, env_name):
+    """
+    Args:
+        policy(Policy): instance of Policy
+    Returns:
+        score
+    """
+    env = gym.make(env_name)
+    env = gym.wrappers.Monitor(env, './video', force=True)
+    
+    
+    raw_return = 0
+    observ = env.reset()
+    observ = observ[np.newaxis, ...]
+    frames = []
+    
+    for t in itertools.count():
+        # a_t ~ pi(a_t | s_t)
+        frames.append(env.render(mode='rgb_array'))
+        action = policy.compute_action(observ)
+        observ, reward, done, _ = env.step(action)
+        observ = observ[np.newaxis, ...]
+        raw_return += reward
+        
+        if done:
+            break
+    return np.asarray(frames)

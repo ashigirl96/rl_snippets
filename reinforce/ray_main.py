@@ -20,13 +20,13 @@ def default_config():
     # Whether use bias on layer
     use_bias = True
     # OpenAI Gym environment name
-    env_name = 'CartPole-v0'
+    env_name = 'CartPole-v1'
     # Discount Factor (gamma)
     discount_factor = .995
     # Learning rate
     learning_rate = 0.1
     # Number of episodes
-    num_episodes = 200
+    num_episodes = 100
     # Activation function used in dense layer
     activation = tf.nn.relu
     # Epsilon-Greedy Policy
@@ -41,7 +41,6 @@ def default_config():
 
 
 def main(_):
-    start_time = time.time()
     
     config = AttrDict(default_config())
     # Define Agent that train with REINFORCE algorithm.
@@ -50,7 +49,8 @@ def main(_):
     remote_policies = [RemotePolicy.remote(config) for _ in range(5)]
     
     train_results = []
-    
+
+    start_time = time.time()
     # Train for num_iters times.
     for i, result in enumerate(agent.train(config.num_episodes)):
         evals = agent.evaluate(remote_policies)
@@ -65,6 +65,7 @@ def main(_):
     
     end_time = time.time()
     duration = end_time - start_time
+    # 100 episodes, Process duration: 40.74085235595703[s] using GPU
     print('\nProcess duration: {0}[s]'.format(duration))
     
     plot_agent_stats(train_results)

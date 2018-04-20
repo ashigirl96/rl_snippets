@@ -31,8 +31,8 @@ class Policy(object):
         self._build_model()
         self._set_loss()
         
-        device = '/gpu:0' if config.use_gpu else '/cpu:0'
-        with tf.device(device):
+        
+        with tf.device('/gpu:0' if config.use_gpu else '/cpu:0'):
             optimizer = tf.train.AdamOptimizer(0.01)
         grads_and_vars = optimizer.compute_gradients(self.loss)
         self.train_op = optimizer.apply_gradients(grads_and_vars)
@@ -109,16 +109,22 @@ class Policy(object):
         return loss
     
     def get_weights(self):
+        """Get neural network weights using ray.experimental.Variables
+        
+        Returns:
+            Weights wrapped by dict
+        """
         return self.variables.get_weights()
     
-    def evaluate(self, new_weights):
+    def evaluate(self, new_weights=None, env_name='CartPole-v1'):
         """Evaluate one episodes and return score.
         
         Returns:
             score
         """
-        env = gym.make('CartPole-v0')
-        self.variables.set_weights(new_weights)
+        env = gym.make(env_name)
+        if isinstance(new_weights, dict):
+            self.variables.set_weights(new_weights)
         
         raw_return = 0
         observ = env.reset()
@@ -126,7 +132,7 @@ class Policy(object):
         
         for t in itertools.count():
             # a_t ~ pi(a_t | s_t)
-            action = self.compute_action(observ, False)
+            action = self.compute_action(observ, training=False)
             observ, reward, done, _ = env.step(action)
             observ = observ[np.newaxis, ...]
             raw_return += reward
@@ -150,8 +156,7 @@ class ValueFunction(object):
         self._config = config
         self._build_model()
         self._set_loss()
-        device = '/gpu:0' if config.use_gpu else '/cpu:0'
-        with tf.device(device):
+        with tf.device('/gpu:0' if config.use_gpu else '/cpu:0'):
             optimizer = tf.train.AdamOptimizer(0.001)
         self.train_op = optimizer.minimize(self.loss)
         
@@ -185,5 +190,5 @@ class ValueFunction(object):
     def get_weights(self):
         return self.variables.get_weights()
 
-
+# Remote actor(Policy) function enable be called in distribution.
 RemotePolicy = ray.remote(Policy)

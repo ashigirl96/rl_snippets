@@ -19,6 +19,7 @@ class bcolors:
     ENDC = '\033[0m'
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
+    
 
 
 def get_available_gpus():
@@ -39,7 +40,7 @@ def plot_agent_stats(results, window=5):
     plt.xlabel('Number of Episodes')
     plt.title('REINFORCE algorithm.')
     plt.xlim((0, df.index.values[-1]))
-    plt.ylim((0, 200))
+    plt.ylim((0, 500))
     axes[0].plot(df['policy_loss'], label='Policy Loss.')
     axes[0].set_ylabel('Policy Loss.')
     
