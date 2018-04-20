@@ -11,8 +11,8 @@ import ray
 import tensorflow as tf
 from agents.tools.wrappers import ConvertTo32Bit
 
-from reinforce.policy import Policy, ValueFunction
-from reinforce.rollout import rollouts
+from actor_critic.policy import Policy, ValueFunction
+from actor_critic.rollout import rollouts
 
 Transition = collections.namedtuple('Transition',
                                     'observ, reward, done, action, next_observ, raw_return, return_')
@@ -33,7 +33,7 @@ class ActorCrtic(object):
         self.env = ConvertTo32Bit(env)
         with tf.device('/cpu:0'):
             self.policy = Policy(config=config, sess=self.sess)
-            self.value_func = ValueFunction(config=config,sess=self.sess)
+            self.value_func = ValueFunction(config=config, sess=self.sess)
         self._init()
     
     def _init(self):
@@ -53,22 +53,18 @@ class ActorCrtic(object):
         discount_factor = self.config.discount_factor
         
         policy_losses = []
-        val_losses = []
-        for t, transition in enumerate(trajectory):
-            baseline = self.value_func.predict(transition.observ)
-            return_ = sum(discount_factor ** i * t_.reward for i, t_ in enumerate(trajectory[t:]))
-            # Compute advantage.
-            advantage = return_ - baseline
-            # Compute target for value function.
-            next_observ = transition.next_observ
-            target = transition.reward + self.value_func.predict(next_observ)
-            # Apply value function gradients.
-            loss_ = self.value_func.apply(transition.observ, target)
-            # Apply policy gradients.
-            loss = self.policy.apply(transition.observ, transition.action, advantage)
-            # loss = self.policy.apply(transition.observ, transition.action, return_)
-            policy_losses.append(loss)
-            val_losses.append(loss_)
+        
+        batch_observ, batch_reward, batch_done, batch_action, batch_next_observ, _, _ = zip(*trajectory)
+        batch_reward = np.asarray(batch_reward)[..., np.newaxis]
+        val_next_observ = np.asarray(self.value_func.predict(batch_next_observ))
+        targets = batch_reward + val_next_observ
+        val_losses = self.value_func.apply(batch_observ, targets)
+        baselines = self.value_func.predict(batch_observ)
+        advantages = targets - baselines
+        for observ, action, advantage in zip(batch_observ, batch_action, advantages):
+            observ = observ[np.newaxis, ...]
+            policy_loss = self.policy.apply(observ, action, advantage)
+            policy_losses.append(policy_loss)
         return policy_losses, val_losses
     
     def train(self, num_episodes):

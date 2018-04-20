@@ -12,7 +12,7 @@ import tensorflow as tf
 from agents.tools import AttrDict
 
 from actor_critic.agent import ActorCrtic
-from reinforce.policy import RemotePolicy
+from actor_critic.policy import RemotePolicy
 from reinforce.utils import plot_agent_stats
 
 
