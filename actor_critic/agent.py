@@ -22,7 +22,7 @@ TrainResult = collections.namedtuple('TrainResult', 'policy_loss, val_loss, eval
 TrainResult.__new__.__defaults__ = (None,) * len(TrainResult._fields)
 
 
-class REINFORCE(object):
+class ActorCrtic(object):
     
     def __init__(self, config):
         tf.reset_default_graph()
@@ -59,8 +59,11 @@ class REINFORCE(object):
             return_ = sum(discount_factor ** i * t_.reward for i, t_ in enumerate(trajectory[t:]))
             # Compute advantage.
             advantage = return_ - baseline
+            # Compute target for value function.
+            next_observ = transition.next_observ
+            target = transition.reward + self.value_func.predict(next_observ)
             # Apply value function gradients.
-            loss_ = self.value_func.apply(transition.observ, return_)
+            loss_ = self.value_func.apply(transition.observ, target)
             # Apply policy gradients.
             loss = self.policy.apply(transition.observ, transition.action, advantage)
             # loss = self.policy.apply(transition.observ, transition.action, return_)

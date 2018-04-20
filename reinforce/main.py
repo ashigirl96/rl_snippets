@@ -64,7 +64,7 @@ def main(_):
     # 100 episodes, Process duration: 59.979570150375366[s]
     print('\nProcess duration: {0}[s]'.format(duration))
     
-    plot_agent_stats(train_results)
+    plot_agent_stats(train_results, 'REINFORCE algorithm.')
     plt.show()
 
 

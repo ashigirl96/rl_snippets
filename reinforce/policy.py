@@ -167,13 +167,13 @@ class ValueFunction(object):
         use_bias = self._config.use_bias
         
         self.observ = tf.placeholder(tf.float32, (None, 4), name='observ')
-        self.return_ = tf.placeholder(tf.float32, name='return_')
+        self.target = tf.placeholder(tf.float32, name='target')
         x = tf.layers.dense(self.observ, 1, use_bias=use_bias,
                             kernel_initializer=tf.zeros_initializer)
         self.logits = x
     
     def _set_loss(self):
-        losses = tf.losses.mean_squared_error(labels=self.return_,
+        losses = tf.losses.mean_squared_error(labels=self.target,
                                               predictions=self.logits)
         self.loss = tf.reduce_mean(losses)
     
@@ -182,9 +182,9 @@ class ValueFunction(object):
                                   feed_dict={self.observ: observ})
         return baseline
     
-    def apply(self, observ, return_):
+    def apply(self, observ, target):
         _, loss = self._sess.run([self.train_op, self.loss],
-                                 feed_dict={self.observ: observ, self.return_: return_})
+                                 feed_dict={self.observ: observ, self.target: target})
         return loss
     
     def get_weights(self):
