@@ -11,8 +11,8 @@ import ray
 import tensorflow as tf
 from agents.tools import AttrDict
 
-from reinforce.agent import REINFORCE
-from reinforce.policy import RemotePolicy
+from actor_critic.batch_agent import BatchActorCrtic
+from actor_critic.policy import RemotePolicy
 from reinforce.utils import plot_agent_stats
 
 
@@ -26,7 +26,7 @@ def default_config():
     # Learning rate
     learning_rate = 0.1
     # Number of episodes
-    num_episodes = 100
+    num_episodes = 50
     # Activation function used in dense layer
     activation = tf.nn.relu
     # Epsilon-Greedy Policy
@@ -42,8 +42,8 @@ def default_config():
 
 def main(_):
     config = AttrDict(default_config())
-    # Define Agent that train with REINFORCE algorithm.
-    agent = REINFORCE(config)
+    # Define Agent that train with ActorCrtic algorithm.
+    agent = BatchActorCrtic(config)
     
     remote_policies = [RemotePolicy.remote(config) for _ in range(5)]
     
@@ -67,7 +67,7 @@ def main(_):
     # 100 episodes, Process duration: 40.74085235595703[s] using GPU
     print('\nProcess duration: {0}[s]'.format(duration))
     
-    plot_agent_stats(train_results, 'REINFORCE algorithm.')
+    plot_agent_stats(train_results, 'Actor Critic algorithm.')
     plt.show()
 
 

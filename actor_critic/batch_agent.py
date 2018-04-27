@@ -5,7 +5,7 @@ from __future__ import division
 from __future__ import print_function
 
 import collections
-from dm_control import suite
+import gym
 import numpy as np
 import ray
 import tensorflow as tf
@@ -22,13 +22,13 @@ TrainResult = collections.namedtuple('TrainResult', 'policy_loss, val_loss, eval
 TrainResult.__new__.__defaults__ = (None,) * len(TrainResult._fields)
 
 
-class ActorCrtic(object):
+class BatchActorCrtic(object):
     
     def __init__(self, config):
         tf.reset_default_graph()
         self.sess = tf.Session(config=config.sess_config)
         
-        env = config.env
+        env = gym.make(config.env_name)
         self.config = config
         self.env = ConvertTo32Bit(env)
         with tf.device('/cpu:0'):

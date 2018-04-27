@@ -11,8 +11,8 @@ import ray
 import tensorflow as tf
 from agents.tools import AttrDict
 
-from reinforce.agent import REINFORCE
-from reinforce.policy import RemotePolicy
+from actor_critic.online_agent import OnlineActorCrtic
+from actor_critic.policy import RemotePolicy
 from reinforce.utils import plot_agent_stats
 
 
@@ -42,8 +42,8 @@ def default_config():
 
 def main(_):
     config = AttrDict(default_config())
-    # Define Agent that train with REINFORCE algorithm.
-    agent = REINFORCE(config)
+    # Define Agent that train with ActorCrtic algorithm.
+    agent = OnlineActorCrtic(config)
     
     remote_policies = [RemotePolicy.remote(config) for _ in range(5)]
     
@@ -67,7 +67,7 @@ def main(_):
     # 100 episodes, Process duration: 40.74085235595703[s] using GPU
     print('\nProcess duration: {0}[s]'.format(duration))
     
-    plot_agent_stats(train_results, 'REINFORCE algorithm.')
+    plot_agent_stats(train_results, 'Actor Critic algorithm.')
     plt.show()
 
 

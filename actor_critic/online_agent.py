@@ -5,7 +5,7 @@ from __future__ import division
 from __future__ import print_function
 
 import collections
-from dm_control import suite
+import gym
 import numpy as np
 import ray
 import tensorflow as tf
@@ -22,13 +22,13 @@ TrainResult = collections.namedtuple('TrainResult', 'policy_loss, val_loss, eval
 TrainResult.__new__.__defaults__ = (None,) * len(TrainResult._fields)
 
 
-class ActorCrtic(object):
+class OnlineActorCrtic(object):
     
     def __init__(self, config):
         tf.reset_default_graph()
         self.sess = tf.Session(config=config.sess_config)
         
-        env = config.env
+        env = gym.make(config.env_name)
         self.config = config
         self.env = ConvertTo32Bit(env)
         with tf.device('/cpu:0'):
@@ -53,17 +53,22 @@ class ActorCrtic(object):
         discount_factor = self.config.discount_factor
         
         policy_losses = []
+        val_losses = []
         
-        batch_observ, batch_reward, batch_done, batch_action, batch_next_observ, _, _ = zip(*trajectory)
-        batch_reward = np.asarray(batch_reward)[..., np.newaxis]
-        val_next_observ = np.asarray(self.value_func.predict(batch_next_observ))
-        targets = batch_reward + discount_factor * val_next_observ
-        val_losses = self.value_func.apply(batch_observ, targets)
-        baselines = self.value_func.predict(batch_observ)
-        advantages = targets - baselines
-        for observ, action, advantage in zip(batch_observ, batch_action, advantages):
-            observ = observ[np.newaxis, ...]
-            policy_loss = self.policy.apply(observ, action, advantage)
+        for t, transition in enumerate(trajectory):
+            observ = transition.observ[np.newaxis, ...]
+            next_observ = transition.next_observ[np.newaxis, ...]
+            # return_ = sum(discount_factor ** i * t_.reward for i, t_ in enumerate(trajectory[t:]))
+            
+            val_next_observ = self.value_func.predict(next_observ)
+            td_target = transition.reward + discount_factor * val_next_observ
+            baseline = self.value_func.predict(observ)
+            td_error = td_target - baseline
+
+            val_loss = self.value_func.apply(observ, td_target)
+            policy_loss = self.policy.apply(observ, transition.action, td_error)
+            
+            val_losses.append(val_loss)
             policy_losses.append(policy_loss)
         return policy_losses, val_losses
     

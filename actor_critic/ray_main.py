@@ -21,6 +21,7 @@ def default_config():
     use_bias = True
     # OpenAI Gym environment name
     env_name = 'CartPole-v1'
+    # env = suite.load(domain_name='cartpole', task_name='swingup')
     # Discount Factor (gamma)
     discount_factor = .995
     # Learning rate
