@@ -16,6 +16,7 @@ __pycache__/
 *.so
 
 # Distribution / packaging
+*/checkpoints/
 .Python
 build/
 develop-eggs/
@@ -197,3 +198,5 @@ Network Trash Folder
 Temporary Items
 .apdisk
 
+
+checkpoints/
