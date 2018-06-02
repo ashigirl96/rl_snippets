@@ -1,0 +1,5 @@
+[
+  "test_memory.py::ReplayBufferTest::test_batch_size_greater_length",
+  "test_memory.py::ReplayBufferTest::test_capacity",
+  "test_memory.py::ReplayBufferTest::test_session"
+]
