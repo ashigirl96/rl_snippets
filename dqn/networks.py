@@ -35,9 +35,9 @@ def feed_forward_value(config,
     if not isinstance(action_space, gym.spaces.Discrete):
         raise ValueError('Unexpected action space.')
     action_size = action_space.n
-    observ = tf.placeholder(tf.float32, [None, *processed_observ_shape])
+    observ = tf.placeholder(tf.float32, [None, *processed_observ_shape], name='observ')
     if not isinstance(action, tf.Tensor):
-        action = tf.placeholder(tf.int32, [None])  # [2, 1, 1, 0] if batch_size is 4
+        action = tf.placeholder(tf.int32, [None], name='action')  # [2, 1, 1, 0] if batch_size is 4
         feed = lambda observ_, action_: {observ: observ_, action: action_}
     else:
         print('action {}'.format(action))
@@ -54,7 +54,7 @@ def feed_forward_value(config,
         
         # Look at experimental/gather.py
         gather_indices = tf.range(config.batch_size) * action_size + action
-        picked_value = tf.gather(value, gather_indices)
+        picked_value = tf.gather(tf.reshape(value, [-1]), gather_indices)
     
     with tf.variable_scope('policy'):
         picked_action = tf.argmax(value, axis=1)
@@ -64,5 +64,20 @@ def feed_forward_value(config,
         value=value, picked_value=picked_value, picked_action=picked_action, feed=feed)
 
 
-def value_loss(network, target):
-    pass
+def value_prediction(target, scope='compute_target'):
+    with tf.name_scope(scope):
+        reward = tf.placeholder(tf.float32, [None], name='reward')
+        terminal = tf.placeholder(tf.bool, [None], name='terminal')
+        not_terminal = tf.cast(tf.logical_not(terminal), tf.float32)
+        value = reward + tf.multiply(not_terminal, target.picked_value)
+        feed = lambda reward_, terminal_: {reward: reward_, terminal: terminal_}
+        return tools.AttrDict(value=value, feed=feed)
+
+
+def compute_loss(network, target_value, scope='compute_loss'):
+    with tf.name_scope(scope):
+        losses = tf.losses.mean_squared_error(
+            tf.stop_gradient(target_value),
+            network.picked_value)
+        loss = tf.reduce_mean(losses)
+        return loss

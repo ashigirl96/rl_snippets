@@ -10,14 +10,11 @@ import collections
 import gym
 import numpy as np
 import tensorflow as tf
+from agents import tools
 
+from dqn.configs import default_config
 # Replay Buffer
 from dqn.preprocess import atari_preprocess
-
-episodes = 10000
-capacity = 500000
-frame_size = 4
-replay_memory_init_size = 50000
 
 transition = collections.namedtuple('transition', 'observ, reward, terminal, next_observ, action, advantage')
 transition.__new__.__defaults__ = (None,) * len(transition._fields)
@@ -58,8 +55,17 @@ class ReplayBuffer(object):
         if len(self) < batch_size:
             raise ValueError('memory length is less than size.')
         choice = np.random.choice(len(self), batch_size)
-        sample_ = np.asarray(self._memory)[choice]
-        return sample_
+        # 'transition', 'observ, reward, terminal, next_observ, action, advantage')
+        observ, reward, terminal, next_observ, action, advantage = zip(*np.asarray(self._memory)[choice])
+        batch_transition = transition(
+            observ=np.asarray(observ),
+            reward=reward,
+            terminal=terminal,
+            next_observ=np.asarray(next_observ),
+            action=np.asarray(action),
+            advantage=np.asarray(advantage),
+        )
+        return batch_transition
 
 
 def sample_action(observ, env):
@@ -67,7 +73,11 @@ def sample_action(observ, env):
 
 
 # Collect transition and store in the replay buffer.
-def initialize_memory(sess: tf.Session, env: gym.Env, batch_size=32):
+def initialize_memory(sess: tf.Session, env: gym.Env, config):
+    capacity = config.capacity
+    frame_size = config.frame_size
+    replay_memory_init_size = config.replay_memory_init_size
+    
     print('Initialize replay buffer memory...')
     replay_buffer = ReplayBuffer(capacity)
     
@@ -98,9 +108,10 @@ def initialize_memory(sess: tf.Session, env: gym.Env, batch_size=32):
 def main(_):
     init = tf.global_variables_initializer()
     env = gym.make('SpaceInvaders-v0')
+    config = tools.AttrDict(default_config())
     with tf.Session() as sess:
         init.run()
-        buffer = initialize_memory(sess, env)
+        buffer = initialize_memory(sess, env, config)
         print(len(buffer))
 
 
