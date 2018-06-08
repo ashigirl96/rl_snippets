@@ -9,7 +9,7 @@ import tensorflow as tf
 from agents import tools
 
 
-# Q-Network
+# Q-Network and Target Network.
 def feed_forward_value(config,
                        observ_space: gym.Env.observation_space,
                        action_space: gym.Env.action_space,
@@ -65,12 +65,12 @@ def feed_forward_value(config,
 
 
 def value_prediction(target, scope='compute_target'):
+    feed = lambda reward_, terminal_: {reward: reward_, terminal: terminal_}
     with tf.name_scope(scope):
         reward = tf.placeholder(tf.float32, [None], name='reward')
         terminal = tf.placeholder(tf.bool, [None], name='terminal')
         not_terminal = tf.cast(tf.logical_not(terminal), tf.float32)
         value = reward + tf.multiply(not_terminal, target.picked_value)
-        feed = lambda reward_, terminal_: {reward: reward_, terminal: terminal_}
         return tools.AttrDict(value=value, feed=feed)
 
 

@@ -15,8 +15,18 @@ from dqn.configs import default_config
 from dqn.memory import initialize_memory
 
 
-# optimizer = tf.train.AdamOptimizer(0.0001)
-# train_op = optimizer.minimize(tf.Variable(0.1))
+def make_session(num_cpu=8):
+    tf_config = tf.ConfigProto(
+        inter_op_parallelism_threads=num_cpu,
+        intra_op_parallelism_threads=num_cpu)
+    return tf.Session(config=tf_config)
+
+
+def initialize_variables(sess: tf.Session):
+    sess.run([
+        tf.global_variables_initializer(),
+        tf.local_variables_initializer(),
+    ])
 
 
 def main(_):
@@ -40,24 +50,23 @@ def main(_):
         optimizer = tf.train.RMSPropOptimizer(0.00025)
         train_op = optimizer.minimize(loss)
     
-    init = tf.global_variables_initializer()
-    with tf.Session() as sess:
-        init.run()
-        
-        # Initialize replay buffer.
-        buffer = initialize_memory(sess, env, _config)
+    sess = make_session()
+    initialize_variables(sess)
+    
+    # Initialize replay buffer.
+    buffer = initialize_memory(sess, env, _config)
+    
+    for _ in range(2):
         batch_transition = buffer.sample(_config.batch_size)
         
-        init = tf.global_variables_initializer()
-        with tf.Session() as sess:
-            init.run()
-            feed_dict = dict()
-            feed_dict.update(predicted_target.feed(batch_transition.reward,
-                                                   batch_transition.terminal))
-            feed_dict.update(network.feed(batch_transition.observ,
-                                          batch_transition.action))
-            feed_dict.update(target.feed(batch_transition.next_observ))
-            sess.run(train_op, feed_dict=feed_dict)
+        feed_dict = dict()
+        feed_dict.update(predicted_target.feed(batch_transition.reward,
+                                               batch_transition.terminal))
+        feed_dict.update(network.feed(batch_transition.observ,
+                                      batch_transition.action))
+        feed_dict.update(target.feed(batch_transition.next_observ))
+        _, loss_ = sess.run([train_op, loss], feed_dict=feed_dict)
+        print('loss {}'.format(loss_))
 
 
 if __name__ == '__main__':
