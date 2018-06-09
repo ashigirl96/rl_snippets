@@ -8,7 +8,7 @@ import gym
 import tensorflow as tf
 from agents import tools
 
-from dqn import utility
+from dddqn import utility
 
 
 class ValueFunction(object):
@@ -110,8 +110,16 @@ class ValueFunction(object):
             for size in self._config.conv_value_layers:
                 x = tf.layers.conv2d(x, filters=size[0], kernel_size=size[1], strides=size[2], activation=tf.nn.relu)
             x = tf.layers.flatten(x)
-            x = tf.layers.dense(x, 512, tf.nn.relu)
-            value = tf.layers.dense(x, action_size)
+
+            # https://arxiv.org/abs/1511.06581
+            advantage = tf.layers.dense(x, 512, tf.nn.relu)
+            state_value = tf.layers.dense(x, 512, tf.nn.relu)
+            
+            advantage = tf.layers.dense(advantage, action_size)
+            state_value = tf.layers.dense(state_value, 1)
+            # (9)
+            value = state_value + (advantage - tf.reduce_mean(advantage, axis=1, keepdims=True))
+            
             self.value = tf.check_numerics(value, value.name)
             
             # Q-network use this operation.

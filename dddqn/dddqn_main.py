@@ -1,4 +1,4 @@
-"""DQN"""
+"""Dueling Double Deep-Q Network"""
 
 from __future__ import absolute_import
 from __future__ import division
@@ -12,9 +12,9 @@ import numpy as np
 import tensorflow as tf
 from ray.rllib.utils.atari_wrappers import wrap_deepmind
 
-from dqn.configs import default_config
-from dqn.memory import initialize_memory, transition
-from dqn.networks import ValueFunction
+from dddqn.configs import default_config
+from dddqn.memory import initialize_memory, transition
+from dddqn.networks import ValueFunction
 
 
 def make_session(num_cpu=8):
@@ -102,10 +102,11 @@ class Evaluate(object):
 
 
 def main(_):
-    env = gym.make('Pong-v0')
+    env = gym.make('SpaceInvaders-v0')
+    # env = gym.make('Pong-v0')
     env = wrap_deepmind(env)
     
-    experiment_dir = os.path.abspath("./experiments2/{}".format(env.spec.id))
+    experiment_dir = os.path.abspath("./experiments/{}".format(env.spec.id))
     atari_actions = np.arange(env.action_space.n, dtype=np.int32)
     # _config = tools.AttrDict(default_config())
     _config = default_config()
