@@ -15,7 +15,7 @@ from agents import tools
 from dqn.configs import default_config
 from dqn.memory import initialize_memory, transition
 from dqn.networks import ValueFunction
-from dqn.preprocess import atari_preprocess
+from ray.rllib.utils.atari_wrappers import wrap_deepmind
 
 
 def make_session(num_cpu=8):
@@ -44,28 +44,34 @@ def eps_greedy_policy(q_network, action_size):
     return policy_fn
 
 
-def make_saver(sess):
-    checkpoint_dir = './logdir'
+def make_saver(sess, experiment_dir):
+    checkpoint_dir = os.path.join(experiment_dir, "checkpoints")
     checkpoint_path = os.path.join(checkpoint_dir, "model")
+    if not os.path.exists(checkpoint_dir):
+        os.makedirs(checkpoint_dir)
+    # checkpoint_dir = './logdir'
     saver = tf.train.Saver(max_to_keep=5)
     latest_checkpoint = tf.train.latest_checkpoint(checkpoint_dir)
     if latest_checkpoint:
         print("Loading model checkpoint {}...\n".format(latest_checkpoint))
         saver.restore(sess, latest_checkpoint)
-    summary_writer = tf.summary.FileWriter('./logdir', sess.graph)
     return saver, checkpoint_path
 
 
 def main(_):
     env = gym.make('SpaceInvaders-v0')
-    
+    env = wrap_deepmind(env)
+
+    experiment_dir = os.path.abspath("./experiments/{}".format(env.spec.id))
     atari_actions = np.arange(env.action_space.n, dtype=np.int32)
-    
     _config = tools.AttrDict(default_config())
     
     # Initialize networks.
     with tf.variable_scope('q_network'):
-        q_network = ValueFunction(_config, env.observation_space, env.action_space)
+        q_network = ValueFunction(_config,
+                                  env.observation_space,
+                                  env.action_space,
+                                  summaries_dir=experiment_dir)
     with tf.variable_scope('target'):
         target = ValueFunction(_config, env.observation_space, env.action_space, q_network)
     # Initialize global step
@@ -74,7 +80,7 @@ def main(_):
     
     sess = make_session()
     initialize_variables(sess)
-    saver, checkpoint_path = make_saver(sess)
+    saver, checkpoint_path = make_saver(sess, experiment_dir)
     
     # Initialize memory
     memory = initialize_memory(sess, env, _config)
@@ -86,16 +92,11 @@ def main(_):
     
     for episode in range(_config.num_episodes):
         observ = env.reset()
-        observ = atari_preprocess(sess, observ)
-        observ = np.stack([observ] * 4, axis=2)
         for t in itertools.count():
             action_prob = policy(sess, observ,
                                  eps[min(total_step, _config.epsilon_decay_steps - 1)])
             action = np.random.choice(atari_actions, size=1, p=action_prob)[0]
             next_observ, reward, terminal, _ = env.step(action)
-            next_observ = atari_preprocess(sess, next_observ)
-            next_observ = np.concatenate(
-                [observ[..., 1:], next_observ[..., None]], axis=2)
             memory.append(
                 transition(observ, reward, terminal, next_observ, action))
             
@@ -116,7 +117,8 @@ def main(_):
             
             if terminal:
                 break
-            
+
+            observ = next_observ
             total_step += 1
         saver.save(sess, checkpoint_path, global_step=tf.train.get_global_step())
 

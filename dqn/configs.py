@@ -4,21 +4,20 @@ def default_config():
     learning_freq = 4
     learning_starts = 50000
     learning_rate = 0.001
-    batch_size = 5
+    batch_size = 64
     gamma = 0.99
     grad_norm_clipping = 10
     stopping_crierion = None
     
-    update_target_estimator_every = 10000
+    update_target_estimator_every = 10_000
     
     # Train episodes
-    # episodes = 10000
-    num_episodes = 1
+    num_episodes = 10000
     
     # Replay Buffer
     capacity = 500_000
     frame_size = 4
-    replay_memory_init_size = 50000
+    replay_memory_init_size = 50_000
     
     # eps-greedy policy coefficient
     epsilon_start = 1.0
