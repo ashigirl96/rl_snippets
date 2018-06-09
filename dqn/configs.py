@@ -7,7 +7,7 @@ def default_config():
     learning_freq = 4
     learning_starts = 50000
     learning_rate = 0.001
-    batch_size = 32
+    batch_size = 5
     gamma = 0.99
     amount = 4
     target_update_freq = 10_000
@@ -15,7 +15,8 @@ def default_config():
     stopping_crierion = None
     
     # Train episodes
-    episodes = 10000
+    # episodes = 10000
+    episodes = 1
     
     # Replay Buffer
     capacity = 500000

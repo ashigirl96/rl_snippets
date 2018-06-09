@@ -35,7 +35,7 @@ class ATARI(object):
             x.set_shape(_size)
             return x
     
-    def __call__(self, observ, sess: tf.Session):
+    def __call__(self, sess: tf.Session, observ):
         return sess.run(self.processed_observ, feed_dict={self.observ_: observ})
 
 

@@ -82,7 +82,7 @@ def initialize_memory(sess: tf.Session, env: gym.Env, config):
     replay_buffer = ReplayBuffer(capacity)
     
     observ = env.reset()
-    observ = atari_preprocess(observ, sess)
+    observ = atari_preprocess(sess, observ)
     observ = np.stack([observ] * frame_size, axis=2)
     for t in itertools.count():
         print('\rMemory size {}'.format(len(replay_buffer)), end='', flush=True)
@@ -90,14 +90,14 @@ def initialize_memory(sess: tf.Session, env: gym.Env, config):
             break
         action = sample_action(observ, env)
         next_observ, reward, terminal, _ = env.step(action)
-        next_observ = atari_preprocess(next_observ, sess)
+        next_observ = atari_preprocess(sess, next_observ)
         next_observ = np.concatenate(
             [observ[..., 1:], np.expand_dims(next_observ, axis=2)], axis=2)
         replay_buffer.append(
             transition(observ, reward, terminal, next_observ, action))
         if terminal:
             observ = env.reset()
-            observ = atari_preprocess(observ, sess)
+            observ = atari_preprocess(sess, observ)
             observ = np.stack([observ] * frame_size, axis=2)
         else:
             observ = next_observ

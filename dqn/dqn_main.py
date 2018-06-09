@@ -4,15 +4,17 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import functools
+import itertools
 
 import gym
 import tensorflow as tf
 from agents import tools
+import numpy as np
 
-from dqn import networks
 from dqn.configs import default_config
 from dqn.memory import initialize_memory
+from dqn.networks import ValueFunction
+from dqn.preprocess import atari_preprocess
 
 
 def make_session(num_cpu=8):
@@ -35,38 +37,24 @@ def main(_):
     _config = tools.AttrDict(default_config())
     
     # Initialize networks.
-    _structure = functools.partial(_config.network,
-                                   _config,
-                                   env.observation_space,
-                                   env.action_space)
-    _target = tf.make_template('target', _structure)
-    _network = tf.make_template('network', _structure)
-    network = _network()
-    target = _target(network.picked_action)
-    
-    predicted_target = networks.value_prediction(target)
-    loss = networks.compute_loss(network, predicted_target.value)
-    with tf.device('/gpu:0'):
-        optimizer = tf.train.RMSPropOptimizer(0.00025)
-        train_op = optimizer.minimize(loss)
-    
+    with tf.variable_scope('q_network'):
+        q_network = ValueFunction(_config, env.observation_space, env.action_space)
+    with tf.variable_scope('target'):
+        target = ValueFunction(_config, env.observation_space, env.action_space, q_network)
     sess = make_session()
     initialize_variables(sess)
+    # Initialize memory
+    memory = initialize_memory(sess, env, _config)
     
-    # Initialize replay buffer.
-    buffer = initialize_memory(sess, env, _config)
-    
-    for _ in range(2):
-        batch_transition = buffer.sample(_config.batch_size)
+    for episode in range(_config.episodes):
+        observ = env.reset()
+        observ = atari_preprocess(sess, observ)
+        observ = np.stack([observ] * 4, axis=2)
         
-        feed_dict = dict()
-        feed_dict.update(predicted_target.feed(batch_transition.reward,
-                                               batch_transition.terminal))
-        feed_dict.update(network.feed(batch_transition.observ,
-                                      batch_transition.action))
-        feed_dict.update(target.feed(batch_transition.next_observ))
-        _, loss_ = sess.run([train_op, loss], feed_dict=feed_dict)
-        print('loss {}'.format(loss_))
+        print(observ.shape)
+        
+        # for t in itertools.count():
+        #     pass
 
 
 if __name__ == '__main__':
