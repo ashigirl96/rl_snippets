@@ -198,3 +198,9 @@ Temporary Items
 .apdisk
 
 .pytest_cache/
+
+events.out.*
+model-*.data*
+model-*.meta*
+model-*.index*
+checkpoint
