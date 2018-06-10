@@ -32,25 +32,23 @@ class ValueFunction(object):
         with tf.device('/gpu:0' if use_gpu else '/cpu:0'):
             print('Forward with gpu..')
             self._value_network(processed_observ_shape)
-        
+            
             # Network variables.
             self.vars_ = utility.trainable_variables(self)
             self._summary_variables()
-        
+            
             # This process will be done by target network.
             if q_network:
                 self._assign_op = self._assign(q_network)
                 self._gamma = self._config.gamma
                 self._value_prediction()
-            # Loss Function.
-            self._value_loss()
-        
-            # Construct optimizer.
-            print('Optimize with gpu...')
-            optimizer = tf.train.RMSPropOptimizer(0.00025, 0.99, 0.0, 1e-6)
-            self.train_op = optimizer.minimize(self.loss,
-                                               global_step=tf.train.get_or_create_global_step())
-        
+            else:
+                # Loss Function.
+                self._value_loss()
+                
+                # Construct optimizer.
+                self._optimizer()
+            
             if summaries_dir:
                 self._merged = tf.summary.merge_all()
                 self._summary_writer = tf.summary.FileWriter(summaries_dir)
@@ -110,9 +108,22 @@ class ValueFunction(object):
             for size in self._config.conv_value_layers:
                 x = tf.layers.conv2d(x, filters=size[0], kernel_size=size[1], strides=size[2], activation=tf.nn.relu)
             x = tf.layers.flatten(x)
-            x = tf.layers.dense(x, 512, tf.nn.relu)
-            value = tf.layers.dense(x, action_size)
+            if self._config.use_dddqn:
+                # https://arxiv.org/abs/1511.06581
+                advantage = tf.layers.dense(x, 512, tf.nn.relu)
+                state_value = tf.layers.dense(x, 512, tf.nn.relu)
+                
+                advantage = tf.layers.dense(advantage, action_size)
+                state_value = tf.layers.dense(state_value, 1)
+                # (9)
+                q_value = state_value + (advantage - tf.reduce_mean(advantage, axis=1, keepdims=True))
+                tf.summary.scalar('advantage', tf.reduce_mean(advantage))
+                tf.summary.scalar('state_value', tf.reduce_mean(state_value))
+            else:
+                q_value = tf.layers.dense(x, 512, tf.nn.relu)
+            value = tf.layers.dense(q_value, action_size)
             self.value = tf.check_numerics(value, value.name)
+            tf.summary.scalar('q_value', tf.reduce_mean(self.value))
             
             # Q-network use this operation.
             self.picked_action = tf.argmax(self.value, axis=1)
@@ -120,6 +131,8 @@ class ValueFunction(object):
             gather_indices = tf.range(self._config.batch_size) * action_size + self._action
             self.picked_value = tf.gather(tf.reshape(self.value, [-1]), gather_indices)
             self.picked_value = tf.check_numerics(self.picked_value, 'picked_value')
+            
+            tf.summary.histogram('value', self.value)
     
     def _value_loss(self):
         """Loss function for vanilla DQN and DDQN.
@@ -162,3 +175,16 @@ class ValueFunction(object):
                                              target_var.assign(network_var),
                                              self.vars_, other_network.vars_)
             return tf.group(*update_target)
+    
+    def _optimizer(self, clip_norm=10):
+        print('Optimize with gpu...')
+        optimizer = tf.train.RMSPropOptimizer(0.00025, 0.99, 0.0, 1e-6)
+        grads_and_vars = optimizer.compute_gradients(self.loss, var_list=self.vars_)
+        for i, (grad, var) in enumerate(grads_and_vars):
+            if grad is None:
+                continue
+            grad_ = tf.clip_by_norm(grad, clip_norm)
+            grads_and_vars[i] = (grad_, var)
+        self.train_op = optimizer.apply_gradients(
+            grads_and_vars,
+            global_step=tf.train.get_or_create_global_step())

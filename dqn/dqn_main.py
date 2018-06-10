@@ -17,7 +17,7 @@ from dqn.memory import initialize_memory, transition
 from dqn.networks import ValueFunction
 
 
-def make_session(num_cpu=8):
+def make_session(num_cpu=6):
     sess_config = tf.ConfigProto(
         allow_soft_placement=True,
         inter_op_parallelism_threads=num_cpu,
@@ -64,18 +64,23 @@ class Evaluate(object):
         self._sess = sess
         self._env = env
         self._q_network = q_network
-        self._return = tf.Variable(0., False, name='return')
-        self._summary = tf.summary.merge([
-            tf.summary.scalar('evaluate_return', self._return),
-        ])
+        self._test_size = 3
+        with tf.variable_scope('evaluate_return'):
+            self._return = tf.Variable(tf.zeros(self._test_size),
+                                       False, name='return')
+            self._summary = tf.summary.merge([
+                tf.summary.scalar('max_return', tf.reduce_max(self._return)),
+                tf.summary.scalar('mean_return', tf.reduce_mean(self._return)),
+                tf.summary.scalar('min_return', tf.reduce_min(self._return)),
+            ])
     
     def evaluate(self):
-        self._return.assign(0.)
-        return_ = 0.
-        for _ in range(5):
-            return_ += self._evaluate()
+        self._return.assign(tf.zeros_like(self._return))
+        returns = []
+        for i in range(self._test_size):
+            returns.append(self._evaluate())
         _, summary, global_step = self._sess.run([
-            self._return.assign(return_ / 5),
+            self._return.assign(returns),
             self._summary,
             tf.train.get_global_step(),
         ])
@@ -102,13 +107,14 @@ class Evaluate(object):
 
 
 def main(_):
-    env = gym.make('Pong-v0')
+    env = gym.make('SpaceInvaders-v0')
+    # env = gym.make('Pong-v0')
     env = wrap_deepmind(env)
-    
-    experiment_dir = os.path.abspath("./experiments2/{}".format(env.spec.id))
-    atari_actions = np.arange(env.action_space.n, dtype=np.int32)
-    # _config = tools.AttrDict(default_config())
     _config = default_config()
+    
+    experiment_dir = os.path.abspath("./experiments{}/{}".format(
+        '_dddqn' if _config.use_dddqn else '_dqn', env.spec.id))
+    atari_actions = np.arange(env.action_space.n, dtype=np.int32)
     
     # Initialize networks.
     with tf.variable_scope('q_network'):
@@ -126,7 +132,7 @@ def main(_):
     saver, checkpoint_path = make_saver(sess, experiment_dir)
     
     # Initialize memory
-    memory = initialize_memory(sess, env, _config)
+    memory = initialize_memory(sess, env, _config, q_network)
     # Initialize policy
     policy = eps_greedy_policy(q_network, env.action_space.n)
     # rollout function

@@ -73,7 +73,7 @@ def sample_action(observ, env):
 
 
 # Collect transition and store in the replay buffer.
-def initialize_memory(sess: tf.Session, env: gym.Env, config, use_preprocess=None):
+def initialize_memory(sess: tf.Session, env: gym.Env, config, q_network):
     capacity = config.capacity
     replay_memory_init_size = config.replay_memory_init_size
     
@@ -81,11 +81,12 @@ def initialize_memory(sess: tf.Session, env: gym.Env, config, use_preprocess=Non
     replay_buffer = ReplayBuffer(capacity)
     
     observ = env.reset()
+    observ = observ
     for t in itertools.count():
         print('\rMemory size {}'.format(len(replay_buffer)), end='', flush=True)
         if t >= replay_memory_init_size:
             break
-        action = sample_action(observ, env)
+        action = q_network.best_action(sess, observ[None])[0]
         next_observ, reward, terminal, _ = env.step(action)
         replay_buffer.append(
             transition(observ, reward, terminal, next_observ, action))
