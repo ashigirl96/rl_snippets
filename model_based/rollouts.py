@@ -30,7 +30,6 @@ def rollout(policy, env: gym.Env):
         raise NotImplementedError('Multi action cannot impemented.')
     
     observ = env.reset()
-    
     trajectory = []
     
     for t in itertools.count():

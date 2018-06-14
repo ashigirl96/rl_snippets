@@ -6,16 +6,10 @@ from __future__ import print_function
 
 import gym
 import numpy as np
-import roboschool
 import tensorflow as tf
 
 from model_based import rollout
 from model_based import utility
-
-if roboschool:
-    env = gym.make('RoboschoolAnt-v1')
-else:
-    env = gym.make('CartPole-v1')
 
 
 class DynamicsNetwork(object):
@@ -167,15 +161,16 @@ class RandomPolicy:
 
 def main(_):
     tf.reset_default_graph()
+    env = utility.make_environment()
     random_policy = RandomPolicy(env)
     trajectory = rollout(random_policy, env)
     batch_transition = utility.batch(trajectory)
-    print(batch_transition.action[0])
     
     dynamics = DynamicsNetwork(env, valid_horization=10)
     
+    saver = utility.define_saver(exclude=('.*_temporary.*',))
     sess = utility.make_session()
-    utility.initialize_variables(sess)
+    utility.initialize_variables(sess, saver, './logdir')
     
     print(dynamics.validate(sess, batch_transition.observ, batch_transition.action))
     print(dynamics.predict(sess,
@@ -186,7 +181,7 @@ def main(_):
                           batch_observ=batch_transition.observ,
                           batch_action=batch_transition.action,
                           batch_next_observ=batch_transition.next_observ))
-    
+    saver.save(sess, './logdir/dynamics')
 
 
 if __name__ == '__main__':

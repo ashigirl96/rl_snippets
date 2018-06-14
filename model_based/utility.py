@@ -4,7 +4,12 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import os
+import re
+
+import gym
 import numpy as np
+import roboschool
 import tensorflow as tf
 
 from model_based import transition
@@ -19,11 +24,70 @@ def make_session(num_cpu=6, graph=None):
     return tf.Session(config=sess_config, graph=graph)
 
 
-def initialize_variables(sess: tf.Session):
-    sess.run([
-        tf.global_variables_initializer(),
+def make_environment(use_monitor=False):
+    if roboschool:
+        env = gym.make('RoboschoolAnt-v1')
+    else:
+        env = gym.make('CartPole-v1')
+    
+    if use_monitor:
+        env = gym.wrappers.Monitor(
+            env, './logdir/{}/gym'.format(env.spec.id), video_callable=lambda x: True, force=True)
+    return env
+
+
+def define_saver(exclude=None) -> tf.train.Saver:
+    """Create a saver for the variables we want to checkpoint.
+  
+    Args:
+      exclude: List of regexes to match variable names to exclude.
+  
+    Returns:
+      Saver object.
+    """
+    variables = []
+    exclude = exclude or []
+    exclude = [re.compile(regex) for regex in exclude]
+    for variable in tf.global_variables():
+        if any(regex.match(variable.name) for regex in exclude):
+            continue
+        variables.append(variable)
+    saver = tf.train.Saver(variables, keep_checkpoint_every_n_hours=5)
+    return saver
+
+
+def initialize_variables(sess, saver, logdir, checkpoint=None, resume=None):
+    """Initialize or restore variables from a checkpoint if available.
+  
+    Args:
+      sess: Session to initialize variables in.
+      saver: Saver to restore variables.
+      logdir: Directory to search for checkpoints.
+      checkpoint: Specify what checkpoint name to use; defaults to most recent.
+      resume: Whether to expect recovering a checkpoint or starting a new run.
+  
+    Raises:
+      ValueError: If resume expected but no log directory specified.
+      RuntimeError: If no resume expected but a checkpoint was found.
+    """
+    sess.run(tf.group(
         tf.local_variables_initializer(),
-    ])
+        tf.global_variables_initializer()))
+    if resume and not (logdir or checkpoint):
+        raise ValueError('Need to specify logdir to resume a checkpoint.')
+    if logdir:
+        state = tf.train.get_checkpoint_state(logdir)
+        if checkpoint:
+            checkpoint = os.path.join(logdir, checkpoint)
+            print('checkpoint {}'.format(checkpoint))
+        if not checkpoint and state and state.model_checkpoint_path:
+            checkpoint = state.model_checkpoint_path
+        if checkpoint and resume is False:
+            message = 'Found unexpected checkpoint when starting a new run.'
+            raise RuntimeError(message)
+        print('checkpoint {}'.format(checkpoint))
+        if checkpoint:
+            saver.restore(sess, checkpoint)
 
 
 def batch(trajectory):
