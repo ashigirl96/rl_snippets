@@ -4,16 +4,13 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import itertools
-
-import collections
 import gym
 import numpy as np
 import roboschool
 import tensorflow as tf
 
-transition = collections.namedtuple(
-    'transition', 'observ, action, next_observ, reward, terminal')
+from model_based import rollout
+from model_based import utility
 
 if roboschool:
     env = gym.make('RoboschoolAnt-v1')
@@ -21,26 +18,11 @@ else:
     env = gym.make('CartPole-v1')
 
 
-def make_session(num_cpu=6):
-    sess_config = tf.ConfigProto(
-        allow_soft_placement=True,
-        inter_op_parallelism_threads=num_cpu,
-        intra_op_parallelism_threads=num_cpu)
-    sess_config.gpu_options.allow_growth = True
-    return tf.Session(config=sess_config)
-
-
-def initialize_variables(sess: tf.Session):
-    sess.run([
-        tf.global_variables_initializer(),
-        tf.local_variables_initializer(),
-    ])
-
-
 class DynamicsNetwork(object):
     
     def __init__(self, env: gym.Env,
-                 valid_horization=10):
+                 valid_horization=10,
+                 log_dir='./logdir'):
         if not isinstance(env.action_space, gym.spaces.Box):
             raise ValueError('This rollout is called only continuous ones.')
         if len(env.action_space.shape) > 1:
@@ -49,40 +31,65 @@ class DynamicsNetwork(object):
             raise NotImplementedError('Multi obsrvation cannot implemented.')
         self._env = env
         self._valid_horization = valid_horization
-        network_summary = self._forward()
-        loss_summary = self._loss()
+        self._log_dir = log_dir
         
-        self._summaries = tf.summary.merge([
+        network_summary = self._forward()
+        train_summary, valid_summary = self._loss()
+        self._summary()
+        
+        self._train_summaries = tf.summary.merge([
             network_summary,
-            loss_summary,
+            train_summary,
+        ])
+        self._valid_summaries = tf.summary.merge([
+            valid_summary,
         ])
     
     def predict(self, sess: tf.Session, observ, squeeze=False):
+        if observ.ndim == 1:
+            observ = observ[None]
         feed_dict = {self._observ: observ}
         outputs = sess.run(self._outputs, feed_dict=feed_dict)
         if squeeze:
             outputs = np.squeeze(outputs)
         return outputs
     
+    def update(self, sess: tf.Session, batch_observ, batch_next_observ, batch_action):
+        feed_dict = {
+            self._observ: batch_observ,
+            self._next_observ: batch_next_observ,
+            self._action: batch_action,
+        }
+        _, loss, global_step, summary = sess.run(
+            [self._train_op, self._train_loss, tf.train.get_global_step(), self._train_summaries],
+            feed_dict=feed_dict)
+        self._train_summary_writer.add_summary(summary, global_step=global_step)
+        return loss
+    
     def validate(self, sess: tf.Session, observs):
         estimated_observ = observs[0, :]
-        h_step_observs = []
+        h_step_estimated_observs = []
         for h in range(self._valid_horization):
-            h_step_observs.append(
-                estimated_observ + self.predict(sess, estimated_observ[None], True))
-        h_step_observs = np.stack(h_step_observs)
+            h_step_estimated_observs.append(
+                estimated_observ + self.predict(sess, estimated_observ, True))
+        h_step_estimated_observs = np.stack(h_step_estimated_observs)
         
         feed_dict = {
-            self._h_step_estimated_observs: h_step_observs,
+            self._h_step_estimated_observs: h_step_estimated_observs,
             self._h_step_observs: observs[1:(self._valid_horization + 1), :]}
-        return sess.run(self._valid_loss, feed_dict=feed_dict)
+        loss, global_step, summary = sess.run(
+            [self._valid_loss, tf.train.get_global_step(), self._valid_summaries],
+            feed_dict=feed_dict)
+        self._valid_summary_writer.add_summary(summary, global_step=global_step)
+        return loss
     
     def _forward(self):
         action_size = self._env.action_space.shape[0]
         self._observ_size = self._env.observation_space.shape[0]
         self._next_observ = tf.placeholder(tf.float32, [None, self._observ_size])
-        with tf.variable_scope('dynamics_network'):
+        with tf.variable_scope('forward_dynamics_network'):
             self._observ = tf.placeholder(tf.float32, [None, self._observ_size])
+            self._action = tf.placeholder(tf.float32, [None, action_size])
             x = tf.layers.dense(self._observ, 1000, activation=tf.nn.relu)
             x = tf.layers.dense(x, 50, activation=tf.nn.relu)
             self._outputs = tf.layers.dense(x, self._observ_size)
@@ -94,58 +101,43 @@ class DynamicsNetwork(object):
     
     def _loss(self):
         # Train losses.
-        losses = tf.losses.mean_squared_error(
-            labels=(self._next_observ - self._observ),
-            predictions=self._outputs)
-        self._loss = tf.reduce_mean(losses)
+        with tf.name_scope('train_loss'):
+            losses = tf.losses.mean_squared_error(
+                labels=(self._next_observ - self._observ),
+                predictions=self._outputs)
+            self._train_loss = tf.reduce_mean(losses)
         
         # Validation losses.
-        self._h_step_observs = tf.placeholder(
-            tf.float32, (self._valid_horization, self._observ_size))
-        self._h_step_estimated_observs = tf.placeholder(
-            tf.float32, (self._valid_horization, self._observ_size))
-        valid_losses = tf.losses.mean_squared_error(
-            labels=self._h_step_observs,
-            predictions=self._h_step_estimated_observs,
-        )
-        self._valid_loss = tf.reduce_mean(valid_losses)
+        with tf.name_scope('valid_loss'):
+            self._h_step_observs = tf.placeholder(
+                tf.float32, (self._valid_horization, self._observ_size))
+            self._h_step_estimated_observs = tf.placeholder(
+                tf.float32, (self._valid_horization, self._observ_size))
+            valid_losses = tf.losses.mean_squared_error(
+                labels=self._h_step_observs,
+                predictions=self._h_step_estimated_observs,
+            )
+            self._valid_loss = tf.reduce_mean(valid_losses)
         
         loss_summary = tf.summary.merge([
             tf.summary.histogram('mse_losses', losses),
-            tf.summary.scalar('loss', self._loss),
+            tf.summary.scalar('loss', self._train_loss),
         ])
         return loss_summary
-
-
-def rollout(policy, env: gym.Env):
-    if not isinstance(env.action_space, gym.spaces.Box):
-        raise ValueError('This rollout is called only continuous ones.')
-    if len(env.action_space.shape) > 1:
-        raise NotImplementedError('Multi action cannot impemented.')
     
-    action_size = env.action_space.shape[0]
-    observ = env.reset()
+    def _optimizer(self):
+        optimizer = tf.train.AdamOptimizer(0.0001)
+        self._train_op = optimizer.minimize(
+            self._train_loss,
+            global_step=tf.train.get_or_create_global_step())
     
-    trajectory = []
-    
-    for t in itertools.count():
-        action_prob = policy.predict(observ)
-        action = action_prob.sample()
-        assert action.shape == env.action_space.shape
-        next_observ, reward, done, _ = env.step(action)
-        trajectory.append(transition(observ, action, next_observ, reward, done))
-        if done:
-            break
-    
-    # Normalize observations.
-    observs, _, next_observs, _, _ = map(np.asarray, zip(*trajectory))
-    normalize_observ = np.stack([observs, next_observs], axis=0).mean()
-    for i, t in enumerate(trajectory):
-        t = t._replace(observ=(t.observ / normalize_observ),
-                       next_observ=(t.next_observ / normalize_observ))
-        trajectory[i] = t
-    
-    return trajectory
+    def _summary(self, graph=None):
+        if not graph:
+            graph = tf.get_default_graph()
+        train_dir = self._log_dir + '/training'
+        valid_dir = self._log_dir + '/validation'
+        self._train_summary_writer = tf.summary.FileWriter(train_dir, graph=graph)
+        self._valid_summary_writer = tf.summary.FileWriter(valid_dir)
 
 
 class RandomPolicy:
@@ -158,34 +150,24 @@ class RandomPolicy:
         """
         self._env = env
     
-    def predict(self, observ):
+    def predict(self, unused_observ):
         """Return random sample distribution."""
         return self._env.action_space
 
 
-def batch(trajectory):
-    observ, action, next_observ, reward, terminal = zip(*np.asarray(trajectory))
-    batch_transition = transition(
-        observ=np.asarray(observ),
-        action=np.asarray(action),
-        next_observ=np.asarray(next_observ),
-        reward=reward,
-        terminal=terminal,
-    )
-    return batch_transition
-
-
 def main(_):
+    tf.reset_default_graph()
     random_policy = RandomPolicy(env)
     trajectory = rollout(random_policy, env)
-    batch_transition = batch(trajectory)
+    batch_transition = utility.batch(trajectory)
     
     dynamics = DynamicsNetwork(env, valid_horization=10)
     
-    sess = make_session()
-    initialize_variables(sess)
+    sess = utility.make_session()
+    utility.initialize_variables(sess)
     
     print(dynamics.validate(sess, batch_transition.observ))
+    print(dynamics.predict(sess, batch_transition.observ[0], squeeze=True))
 
 
 if __name__ == '__main__':
