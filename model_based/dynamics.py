@@ -35,6 +35,7 @@ class DynamicsNetwork(object):
         
         network_summary = self._forward()
         train_summary, valid_summary = self._loss()
+        self._optimizer()
         self._summary()
         
         self._train_summaries = tf.summary.merge([
@@ -45,10 +46,12 @@ class DynamicsNetwork(object):
             valid_summary,
         ])
     
-    def predict(self, sess: tf.Session, observ, squeeze=False):
+    def predict(self, sess: tf.Session, observ, action, squeeze=False):
         if observ.ndim == 1:
             observ = observ[None]
-        feed_dict = {self._observ: observ}
+        if action.ndim == 1:
+            action = action[None]
+        feed_dict = {self._observ: observ, self._action: action}
         outputs = sess.run(self._outputs, feed_dict=feed_dict)
         if squeeze:
             outputs = np.squeeze(outputs)
@@ -66,12 +69,13 @@ class DynamicsNetwork(object):
         self._train_summary_writer.add_summary(summary, global_step=global_step)
         return loss
     
-    def validate(self, sess: tf.Session, observs):
+    def validate(self, sess: tf.Session, observs, actions):
         estimated_observ = observs[0, :]
         h_step_estimated_observs = []
         for h in range(self._valid_horization):
             h_step_estimated_observs.append(
-                estimated_observ + self.predict(sess, estimated_observ, True))
+                estimated_observ + self.predict(
+                    sess, estimated_observ, actions[h, :], squeeze=True))
         h_step_estimated_observs = np.stack(h_step_estimated_observs)
         
         feed_dict = {
@@ -90,7 +94,8 @@ class DynamicsNetwork(object):
         with tf.variable_scope('forward_dynamics_network'):
             self._observ = tf.placeholder(tf.float32, [None, self._observ_size])
             self._action = tf.placeholder(tf.float32, [None, action_size])
-            x = tf.layers.dense(self._observ, 1000, activation=tf.nn.relu)
+            x = tf.concat([self._observ, self._action], axis=1)
+            x = tf.layers.dense(x, 1000, activation=tf.nn.relu)
             x = tf.layers.dense(x, 50, activation=tf.nn.relu)
             self._outputs = tf.layers.dense(x, self._observ_size)
         
@@ -101,14 +106,14 @@ class DynamicsNetwork(object):
     
     def _loss(self):
         # Train losses.
-        with tf.name_scope('train_loss'):
+        with tf.name_scope('train_losses'):
             losses = tf.losses.mean_squared_error(
                 labels=(self._next_observ - self._observ),
                 predictions=self._outputs)
             self._train_loss = tf.reduce_mean(losses)
         
         # Validation losses.
-        with tf.name_scope('valid_loss'):
+        with tf.name_scope('validation_losses'):
             self._h_step_observs = tf.placeholder(
                 tf.float32, (self._valid_horization, self._observ_size))
             self._h_step_estimated_observs = tf.placeholder(
@@ -119,17 +124,22 @@ class DynamicsNetwork(object):
             )
             self._valid_loss = tf.reduce_mean(valid_losses)
         
-        loss_summary = tf.summary.merge([
+        train_summary = tf.summary.merge([
             tf.summary.histogram('mse_losses', losses),
             tf.summary.scalar('loss', self._train_loss),
         ])
-        return loss_summary
+        valid_summary = tf.summary.merge([
+            tf.summary.histogram('valid_losses', valid_losses),
+            tf.summary.scalar('valid_loss', self._valid_loss),
+        ])
+        return train_summary, valid_summary
     
     def _optimizer(self):
-        optimizer = tf.train.AdamOptimizer(0.0001)
-        self._train_op = optimizer.minimize(
-            self._train_loss,
-            global_step=tf.train.get_or_create_global_step())
+        with tf.name_scope('optimizer'):
+            optimizer = tf.train.AdamOptimizer(0.0001)
+            self._train_op = optimizer.minimize(
+                self._train_loss,
+                global_step=tf.train.get_or_create_global_step())
     
     def _summary(self, graph=None):
         if not graph:
@@ -160,14 +170,23 @@ def main(_):
     random_policy = RandomPolicy(env)
     trajectory = rollout(random_policy, env)
     batch_transition = utility.batch(trajectory)
+    print(batch_transition.action[0])
     
     dynamics = DynamicsNetwork(env, valid_horization=10)
     
     sess = utility.make_session()
     utility.initialize_variables(sess)
     
-    print(dynamics.validate(sess, batch_transition.observ))
-    print(dynamics.predict(sess, batch_transition.observ[0], squeeze=True))
+    print(dynamics.validate(sess, batch_transition.observ, batch_transition.action))
+    print(dynamics.predict(sess,
+                           observ=batch_transition.observ[0:10],
+                           action=batch_transition.action[0:10],
+                           squeeze=True).shape)
+    print(dynamics.update(sess,
+                          batch_observ=batch_transition.observ,
+                          batch_action=batch_transition.action,
+                          batch_next_observ=batch_transition.next_observ))
+    
 
 
 if __name__ == '__main__':
