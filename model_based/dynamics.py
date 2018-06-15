@@ -161,7 +161,7 @@ class RandomPolicy:
 
 def main(_):
     tf.reset_default_graph()
-    env = utility.make_environment()
+    env = utility.make_environment(use_monitor=True)
     random_policy = RandomPolicy(env)
     trajectory = rollout(random_policy, env)
     batch_transition = utility.batch(trajectory)

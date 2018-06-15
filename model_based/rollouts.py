@@ -9,12 +9,13 @@ import itertools
 import collections
 import gym
 import numpy as np
+from gym.wrappers.monitoring import stats_recorder, video_recorder
 
 transition = collections.namedtuple(
     'transition', 'observ, action, next_observ, reward, terminal')
 
 
-def rollout(policy, env: gym.Env):
+def rollout(policy, env: gym.Env, use_monitor=False):
     """Return Normalized trajectry.
     
     Args:
@@ -29,7 +30,9 @@ def rollout(policy, env: gym.Env):
     if len(env.action_space.shape) > 1:
         raise NotImplementedError('Multi action cannot impemented.')
     
+    recorder = None
     observ = env.reset()
+    episode_n = 0
     trajectory = []
     
     for t in itertools.count():

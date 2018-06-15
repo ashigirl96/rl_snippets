@@ -32,12 +32,14 @@ def make_environment(use_monitor=False):
     
     if use_monitor:
         env = gym.wrappers.Monitor(
-            env, './logdir/{}/gym'.format(env.spec.id), video_callable=lambda x: True, force=True)
+            env, './logdir/{}'.format(env.spec.id), force=True)
+        print('wrapped env {}'.format(env))
     return env
 
 
 def define_saver(exclude=None) -> tf.train.Saver:
     """Create a saver for the variables we want to checkpoint.
+    # https://github.com/tensorflow/agents/
   
     Args:
       exclude: List of regexes to match variable names to exclude.
@@ -58,6 +60,7 @@ def define_saver(exclude=None) -> tf.train.Saver:
 
 def initialize_variables(sess, saver, logdir, checkpoint=None, resume=None):
     """Initialize or restore variables from a checkpoint if available.
+    # https://github.com/tensorflow/agents/
   
     Args:
       sess: Session to initialize variables in.
