@@ -197,16 +197,5 @@ Network Trash Folder
 Temporary Items
 .apdisk
 
+
 .pytest_cache/
-
-events.out.*
-model-*.data*
-model-*.meta*
-model-*.index*
-
-*.meta.json
-*.mp4
-hw3/
-checkpoint
-*.manifest.json
-*.stats.json

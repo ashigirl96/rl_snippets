@@ -4,6 +4,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import datetime
 import itertools
 import os
 
@@ -72,17 +73,17 @@ class EpsGreedy(object):
     return action_prob
 
 
-def make_saver(sess, experiment_dir):
-  checkpoint_dir = os.path.join(experiment_dir, "checkpoints")
-  checkpoint_path = os.path.join(checkpoint_dir, "model")
-  if not os.path.exists(checkpoint_dir):
-    os.makedirs(checkpoint_dir)
+def make_saver(sess, logdir):
+  # checkpoint_dir = os.path.join(experiment_dir, "checkpoints")
+  # checkpoint_path = os.path.join(checkpoint_dir, "model")
+  if not os.path.exists(logdir):
+    os.makedirs(logdir)
   saver = tf.train.Saver(max_to_keep=5)
-  latest_checkpoint = tf.train.latest_checkpoint(checkpoint_dir)
+  latest_checkpoint = tf.train.latest_checkpoint(logdir)
   if latest_checkpoint:
     print("Loading model checkpoint {}...\n".format(latest_checkpoint))
     saver.restore(sess, latest_checkpoint)
-  return saver, checkpoint_path
+  return saver
 
 
 class Evaluate(object):
@@ -130,10 +131,9 @@ def main(_):
   
   env = gym.make('SpaceInvaders-v0')
   # env = gym.make('Pong-v0')
-  experiment_dir = os.path.abspath("./experiments3/{}/{}".format(
-    # str(datetime.now()).replace(' ', '_'),
-    env.spec.id, 'dddqn' if _config.use_dddqn else 'dqn'))
-  env = gym.wrappers.Monitor(env, experiment_dir + "/gym", force=True)
+  logdir = os.path.abspath('{}-{}'.format(
+    datetime.datetime.now().strftime('%Y%m%dT%H%M%S'), env.spec.id))
+  env = gym.wrappers.Monitor(env, logdir + "/gym", force=True)
   env = wrap_deepmind(env, dim=_config.frame_dim)
   
   atari_actions = np.arange(env.action_space.n, dtype=np.int32)
@@ -143,7 +143,7 @@ def main(_):
     q_network = ValueFunction(_config,
                               env.observation_space,
                               env.action_space,
-                              summaries_dir=experiment_dir)
+                              summaries_dir=logdir)
   with tf.variable_scope('target'):
     target = ValueFunction(_config, env.observation_space, env.action_space, q_network)
   # Epsilon
@@ -153,7 +153,7 @@ def main(_):
   evaluaor = Evaluate(sess, env, q_network)
   policy = EpsGreedy(q_network, env.action_space.n)
   initialize_variables(sess)
-  saver, checkpoint_path = make_saver(sess, experiment_dir)
+  saver = make_saver(sess, logdir)
   
   # Initialize memory
   memory = initialize_memory(sess, env, _config, q_network)
@@ -163,6 +163,8 @@ def main(_):
   print('total_step', total_step)
   
   for episode in range(_config.num_episodes):
+    filename = os.path.join(logdir, 'model.ckpt')
+    saver.save(sess, filename, global_step=tf.train.get_global_step())
     observ = env.reset()
     for t in itertools.count():
       action_prob = policy(sess, observ,
@@ -198,7 +200,6 @@ def main(_):
     print('Episode ({}/{}), last return: {}, last timesteps: {:05}'.format(
       episode, _config.num_episodes, last_rewards, total_step - last_timestep))
     last_timestep = total_step
-    saver.save(sess, checkpoint_path, global_step=tf.train.get_global_step())
 
 
 if __name__ == '__main__':

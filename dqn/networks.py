@@ -25,12 +25,13 @@ class ValueFunction(object):
     self._observ_space = observ_space
     self._action_space = action_space
     self._processed_observ_shape = processed_observ_shape
+    self._is_target_network = q_network is not None
     
     # Build value function.
     use_gpu = self._config.use_gpu
     with tf.device('/gpu:0' if use_gpu else '/cpu:0'):
       print('Forward with gpu..')
-      self._value_network(processed_observ_shape)
+      self._value_network(processed_observ_shape, trainable=not self._is_target_network)
       
       # Network variables.
       self.vars_ = utility.trainable_variables(self)
@@ -58,7 +59,7 @@ class ValueFunction(object):
       
       if summaries_dir:
         self._merged = tf.summary.merge_all()
-        self._summary_writer = tf.summary.FileWriter(summaries_dir)
+        self._summary_writer = tf.summary.FileWriter(summaries_dir + '/train')
   
   def predict(self, sess: tf.Session, observ):
     return sess.run(self.value, feed_dict={self._observ: observ})
@@ -69,8 +70,9 @@ class ValueFunction(object):
       self._action: actions,
       self._target_value: target_values,
       # args for Optimizer
-      self._learning_rate: self._lr_schedule.value(total_step),
     }
+    if self._config.use_adam:
+      feed_dict[self._learning_rate] = self._lr_schedule.value(total_step)
     _, summary, global_step, loss = sess.run(
       [self.train_op, self._merged, tf.train.get_global_step(), self.loss],
       feed_dict=feed_dict)
@@ -107,7 +109,7 @@ class ValueFunction(object):
     for var in self.vars_:
       tf.summary.histogram(var.name, var)
   
-  def _value_network(self, processed_observ_shape):
+  def _value_network(self, processed_observ_shape, trainable=True):
     self._observ = tf.placeholder(tf.float32, [None, *processed_observ_shape], name='observ')
     self._action = tf.placeholder(tf.int32, [None], name='action')  # [2, 1, 1, 0] if batch_size is 4
     action_size = self._action_space.n
@@ -115,22 +117,23 @@ class ValueFunction(object):
     with tf.variable_scope('value'):
       x = self._observ
       for size in self._config.conv_value_layers:
-        x = tf.layers.conv2d(x, filters=size[0], kernel_size=size[1], strides=size[2], activation=tf.nn.relu)
+        x = tf.layers.conv2d(x, filters=size[0], kernel_size=size[1], strides=size[2], activation=tf.nn.relu,
+                             trainable=trainable)
       x = tf.layers.flatten(x)
       if self._config.use_dddqn:
         # https://arxiv.org/abs/1511.06581
-        advantage = tf.layers.dense(x, 512, tf.nn.relu)
-        state_value = tf.layers.dense(x, 512, tf.nn.relu)
+        advantage = tf.layers.dense(x, 512, tf.nn.relu, trainable=trainable)
+        state_value = tf.layers.dense(x, 512, tf.nn.relu, trainable=trainable)
         
-        advantage = tf.layers.dense(advantage, action_size)
-        state_value = tf.layers.dense(state_value, 1)
+        advantage = tf.layers.dense(advantage, action_size, trainable=trainable)
+        state_value = tf.layers.dense(state_value, 1, trainable=trainable)
         # (9)
         q_value = state_value + (advantage - tf.reduce_mean(advantage, axis=1, keepdims=True))
         tf.summary.scalar('advantage', tf.reduce_mean(advantage))
         tf.summary.scalar('state_value', tf.reduce_mean(state_value))
       else:
-        q_value = tf.layers.dense(x, 512, tf.nn.relu)
-      value = tf.layers.dense(q_value, action_size)
+        q_value = tf.layers.dense(x, 512, tf.nn.relu, trainable=trainable)
+      value = tf.layers.dense(q_value, action_size, trainable=trainable)
       self.value = tf.check_numerics(value, value.name)
       tf.summary.scalar('q_value', tf.reduce_mean(self.value))
       
@@ -185,13 +188,29 @@ class ValueFunction(object):
                                          self.vars_, other_network.vars_)
       return tf.group(*update_target)
   
-  def _optimizer(self, clip_norm=10):
+  def _optimizer(self,
+                 clip_norm=10,
+                 learning_rate=0.00025,
+                 learning_rate_minimum=0.00025,
+                 learning_rate_decay=0.96,
+                 learning_rate_decay_step=5 * 10000,
+                 ):
     print('Optimize with gpu...')
-    # optimizer = tf.train.RMSPropOptimizer(0.00025, 0.99, 0.0, 1e-6)
-    self._learning_rate = tf.placeholder(tf.float32, name='learning_rate')
-    optimizer = tf.train.AdamOptimizer(
-      learning_rate=self._learning_rate,
-      epsilon=1e-4)
+    if self._config.use_adam:
+      self._learning_rate = tf.placeholder(tf.float32, name='learning_rate')
+      optimizer = tf.train.AdamOptimizer(
+        learning_rate=self._learning_rate,
+        epsilon=1e-4)
+    else:
+      self.learning_rate_op = tf.maximum(learning_rate_minimum,
+                                         tf.train.exponential_decay(
+                                           learning_rate,
+                                           tf.train.get_or_create_global_step(),
+                                           learning_rate_decay_step,
+                                           learning_rate_decay,
+                                           staircase=True))
+      optimizer = tf.train.RMSPropOptimizer(
+        self.learning_rate_op, momentum=0.95, epsilon=0.01)
     grads_and_vars = optimizer.compute_gradients(self.loss, var_list=self.vars_)
     for i, (grad, var) in enumerate(grads_and_vars):
       if grad is None:

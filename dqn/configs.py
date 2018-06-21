@@ -23,7 +23,6 @@ class default_config:
   frame_size = 4
   frame_dim = 84
   replay_memory_init_size = 50_000
-  # replay_memory_init_size = 1_00
   # eps-greedy policy coefficient
   epsilon_start = 1.0
   epsilon_end = 0.1
@@ -31,6 +30,7 @@ class default_config:
   
   use_gpu = True
   use_dddqn = False
+  use_adam = True
   
   # max step size
   max_total_step_size = 1_000_000
