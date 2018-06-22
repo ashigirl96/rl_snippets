@@ -13,9 +13,12 @@ import numpy as np
 import tensorflow as tf
 from ray.rllib.utils.atari_wrappers import wrap_deepmind
 
+from dqn import utility
 from dqn.configs import default_config
 from dqn.memory import initialize_memory, transition
 from dqn.networks import ValueFunction
+
+FLAGS = tf.flags.FLAGS
 
 
 def get_wrapper_by_name(env, classname):
@@ -29,12 +32,15 @@ def get_wrapper_by_name(env, classname):
       raise ValueError("Couldn't find wrapper named %s" % classname)
 
 
-def make_session(num_cpu=6):
+def make_session(num_cpu=6) -> tf.Session:
   sess_config = tf.ConfigProto(
+    gpu_options=tf.GPUOptions(
+      allow_growth=True,
+    ),
     allow_soft_placement=True,
     inter_op_parallelism_threads=num_cpu,
-    intra_op_parallelism_threads=num_cpu)
-  sess_config.gpu_options.allow_growth = True
+    intra_op_parallelism_threads=num_cpu,
+  )
   return tf.Session(config=sess_config)
 
 
@@ -128,11 +134,18 @@ class Evaluate(object):
 
 def main(_):
   _config = default_config()
+  if _config.use_gpu and len(utility.available_gpus()) < 1:
+    raise ValueError('There not available gpus...')
   
-  env = gym.make('SpaceInvaders-v0')
-  # env = gym.make('Pong-v0')
-  logdir = os.path.abspath('{}-{}'.format(
-    datetime.datetime.now().strftime('%Y%m%dT%H%M%S'), env.spec.id))
+  if not FLAGS.logdir:
+    env = gym.make('SpaceInvaders-v0')
+    # env = gym.make('Breakout-v0')
+    # env = gym.make('Pong-v0')
+    logdir = os.path.abspath('/tmp/{}-{}'.format(
+      datetime.datetime.now().strftime('%Y%m%dT%H%M%S'), env.spec.id))
+  else:
+    logdir = str(FLAGS.logdir)
+    env = gym.make(logdir.split('-', 1)[1])
   env = gym.wrappers.Monitor(env, logdir + "/gym", force=True)
   env = wrap_deepmind(env, dim=_config.frame_dim)
   
@@ -203,4 +216,5 @@ def main(_):
 
 
 if __name__ == '__main__':
+  tf.flags.DEFINE_string('logdir', '', help='load directory')
   tf.app.run()

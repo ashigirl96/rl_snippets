@@ -30,7 +30,7 @@ class default_config:
   
   use_gpu = True
   use_dddqn = False
-  use_adam = True
+  use_adam = False
   
   # max step size
   max_total_step_size = 1_000_000
