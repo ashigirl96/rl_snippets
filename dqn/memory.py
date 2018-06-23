@@ -12,7 +12,7 @@ import numpy as np
 import tensorflow as tf
 
 from dqn.configs import default_config
-from dqn import utility
+from common import utility
 
 # Replay Buffer
 transition = collections.namedtuple('transition', 'observ, reward, terminal, next_observ, action, advantage')

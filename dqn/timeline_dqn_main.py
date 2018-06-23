@@ -91,7 +91,7 @@ def main(_):
   _config = default_config()
   if _config.use_gpu and len(utility.available_gpus(_config.sess_config)) < 1:
     raise ValueError('There not available gpus...')
-  env, logdir = utility.make_atari_environment(FLAGS.logdir, _config.frame_dim, _config.use_monitor)
+  env, logdir = utility.make_atari_environment(FLAGS.logdir, _config.frame_dim, use_monitor=_config.use_monitor)
   atari_actions = np.arange(env.action_space.n, dtype=np.int32)
   
   # Initialize networks.
@@ -108,8 +108,7 @@ def main(_):
   
   saver = utility.define_saver(exclude=('.*_temporary.*',))
   sess = utility.make_session(_config.sess_config)
-  if _config.use_monitor:
-    evaluaor = Evaluate(sess, env, q_network)
+  evaluaor = Evaluate(sess, env, q_network)
   utility.initialize_variables(sess, saver, logdir)
   
   # Initialize memory
@@ -122,7 +121,6 @@ def main(_):
   for episode in range(_config.num_episodes):
     filename = os.path.join(logdir, 'model.ckpt')
     saver.save(sess, filename, global_step=tf.train.get_global_step())
-    last_rewards = 0.
     observ = env.reset()
     for t in itertools.count():
       action_prob = policy(sess, observ,
@@ -140,10 +138,12 @@ def main(_):
                                       batch_transition.next_observ,
                                       best_actions)
       
-      loss = q_network.update_step(sess, batch_transition.observ, batch_transition.action, target_values,
-                                   total_step)
-      print('\r({}/{}) loss: {}'.format(
-        total_step, _config.max_total_step_size, loss), end='', flush=True)
+      loss, update_duration = utility.calculate_duration(
+        lambda: q_network.update_step(sess, batch_transition.observ,
+                                      batch_transition.action,
+                                      target_values, total_step))
+      print('\r({}/{}) loss: {} update duration {}'.format(
+        total_step, _config.max_total_step_size, loss, update_duration), end='', flush=True)
       
       if total_step % _config.update_target_estimator_every == 0:
         print('\nUpdate Target Network...')
@@ -154,11 +154,9 @@ def main(_):
       
       observ = next_observ
       total_step += 1
-    if _config.use_monitor:
-      last_rewards, length_ = evaluaor.evaluate()
+    last_rewards, length_ = evaluaor.evaluate()
     print('Episode ({}/{}), last return: {}, last timesteps: {:05}'.format(
       episode, _config.num_episodes, last_rewards, total_step - last_timestep))
-    last_timestep = total_step
 
 
 if __name__ == '__main__':

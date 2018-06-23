@@ -8,7 +8,7 @@ import gym
 import numpy as np
 import tensorflow as tf
 
-from model_based import utility
+from common import utility
 from model_based.policy import RandomPolicy
 from model_based.rollouts import Experiment
 
@@ -16,7 +16,7 @@ from model_based.rollouts import Experiment
 class DynamicsNetwork(object):
   
   def __init__(self, env: gym.Env,
-               valid_horization=10,
+               valid_horizon=10,
                log_dir='./logdir'):
     if not isinstance(env.action_space, gym.spaces.Box):
       raise ValueError('This rollout is called only continuous ones.')
@@ -25,7 +25,7 @@ class DynamicsNetwork(object):
     if len(env.observation_space.shape) > 1:
       raise NotImplementedError('Multi obsrvation cannot implemented.')
     self._env = env
-    self._valid_horization = valid_horization
+    self._valid_horizon = valid_horizon
     self._log_dir = log_dir
     
     network_summary = self._forward()
@@ -67,7 +67,7 @@ class DynamicsNetwork(object):
   def validate(self, sess: tf.Session, observs, actions):
     estimated_observ = observs[0, :]
     h_step_estimated_observs = []
-    for h in range(self._valid_horization):
+    for h in range(self._valid_horizon):
       h_step_estimated_observs.append(
         estimated_observ + self.predict(
           sess, estimated_observ, actions[h, :], squeeze=True))
@@ -75,7 +75,7 @@ class DynamicsNetwork(object):
     
     feed_dict = {
       self._h_step_estimated_observs: h_step_estimated_observs,
-      self._h_step_observs: observs[1:(self._valid_horization + 1), :]}
+      self._h_step_observs: observs[1:(self._valid_horizon + 1), :]}
     loss, global_step, summary = sess.run(
       [self._valid_loss, tf.train.get_global_step(), self._valid_summaries],
       feed_dict=feed_dict)
@@ -90,8 +90,9 @@ class DynamicsNetwork(object):
       self._observ = tf.placeholder(tf.float32, [None, self._observ_size])
       self._action = tf.placeholder(tf.float32, [None, action_size])
       x = tf.concat([self._observ, self._action], axis=1)
-      x = tf.layers.dense(x, 1000, activation=tf.nn.relu)
-      x = tf.layers.dense(x, 50, activation=tf.nn.relu)
+      # Appendix 2)
+      x = tf.layers.dense(x, 500, activation=tf.nn.relu)
+      x = tf.layers.dense(x, 500, activation=tf.nn.relu)
       self._outputs = tf.layers.dense(x, self._observ_size)
     
     network_summary = tf.summary.merge([
@@ -110,9 +111,9 @@ class DynamicsNetwork(object):
     # Validation losses.
     with tf.name_scope('validation_losses'):
       self._h_step_observs = tf.placeholder(
-        tf.float32, (self._valid_horization, self._observ_size))
+        tf.float32, (self._valid_horizon, self._observ_size))
       self._h_step_estimated_observs = tf.placeholder(
-        tf.float32, (self._valid_horization, self._observ_size))
+        tf.float32, (self._valid_horizon, self._observ_size))
       valid_losses = tf.losses.mean_squared_error(
         labels=self._h_step_observs,
         predictions=self._h_step_estimated_observs,
@@ -131,7 +132,7 @@ class DynamicsNetwork(object):
   
   def _optimizer(self):
     with tf.name_scope('optimizer'):
-      optimizer = tf.train.AdamOptimizer(0.0001)
+      optimizer = tf.train.AdamOptimizer(0.001)
       self._train_op = optimizer.minimize(
         self._train_loss,
         global_step=tf.train.get_or_create_global_step())
@@ -151,13 +152,13 @@ def main(_):
   random_policy = RandomPolicy(env)
   experiment = Experiment(env)
   trajectory = experiment.rollout(random_policy)
-  batch_transition = utility.batch(trajectory, batch_size=32)
+  batch_transition = utility.batch(trajectory, batch_size=512)
   print(batch_transition.observ.shape)
   
-  dynamics = DynamicsNetwork(env, valid_horization=10)
+  dynamics = DynamicsNetwork(env, valid_horizon=10)
 
   saver = utility.define_saver(exclude=('.*_temporary.*',))
-  sess = utility.make_session()
+  sess = utility.make_session(utility.make_sess_config())
   utility.initialize_variables(sess, saver, './logdir')
 
   print(dynamics.validate(sess, batch_transition.observ, batch_transition.action))

@@ -6,8 +6,8 @@ from __future__ import print_function
 
 import gym
 import tensorflow as tf
-
-from dqn import utility
+from common import utility
+import common
 
 
 class ValueFunction(object):
@@ -49,7 +49,7 @@ class ValueFunction(object):
         # Construct optimizer.
         num_iterations = float(self._config.max_total_step_size) / 4.0
         lr_multiplier = 1.0
-        self._lr_schedule = utility.PiecewiseSchedule([
+        self._lr_schedule = common.PiecewiseSchedule([
           (0, 1e-4 * lr_multiplier),
           (num_iterations / 10, 1e-4 * lr_multiplier),
           (num_iterations / 2, 5e-5 * lr_multiplier),
@@ -183,9 +183,9 @@ class ValueFunction(object):
         other_network: Q-network.
     """
     with tf.name_scope('update_target'):
-      update_target = utility.nested.map(lambda target_var, network_var:
+      update_target = common.nested.map(lambda target_var, network_var:
                                          target_var.assign(network_var),
-                                         self.vars_, other_network.vars_)
+                                        self.vars_, other_network.vars_)
       return tf.group(*update_target)
   
   def _optimizer(self,

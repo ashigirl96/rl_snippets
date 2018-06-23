@@ -9,12 +9,14 @@ import itertools
 import collections
 import gym
 import numpy as np
+import tensorflow.contrib.distributions as tfd
 
 transition = collections.namedtuple(
   'transition', 'observ, action, next_observ, reward, terminal')
 
 
 class Experiment(object):
+  _noise = tfd.Normal(0., 0.001)
   
   def __init__(self, env: gym.Env, use_monitor=False):
     """Experiment
@@ -44,6 +46,8 @@ class Experiment(object):
       self.episode_n += 1
     
     observ = self._env.reset()
+    if random_trajectory:
+      observ += self._noise.sample(sample_shape=observ.shape)
     trajectory = []
     
     for t in itertools.count():

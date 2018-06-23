@@ -4,6 +4,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from common import utility
 
 class default_config:
   conv_value_layers = [
@@ -31,6 +32,9 @@ class default_config:
   use_gpu = True
   use_dddqn = False
   use_adam = False
+  use_monitor = False
   
   # max step size
   max_total_step_size = 1_000_000
+  
+  sess_config = utility.make_sess_config()

@@ -6,7 +6,7 @@ from __future__ import print_function
 
 import tensorflow as tf
 
-from model_based import utility
+from common import utility
 from model_based.policy import RandomPolicy
 from model_based.rollouts import Experiment
 import numpy as np
